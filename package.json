@@ -1,0 +1,29 @@
+{
+  "name": "drd",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "license": "MIT",
+  "description": "DRD — Design Research & Development: capture public pages, annotate what you like and why, build reference packs for design agents.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning scripts/dev.ts",
+    "dev:server": "node --disable-warning=ExperimentalWarning server/main.ts",
+    "dev:client": "vite",
+    "migrate": "node --disable-warning=ExperimentalWarning scripts/migrate.ts",
+    "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && vite build",
+    "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning server/main.ts",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "puppeteer": "^24.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

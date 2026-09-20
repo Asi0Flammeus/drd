@@ -1,0 +1,763 @@
+/*
+ * Preview surfaces. Every value here comes from a --pv-* custom property set on
+ * an ancestor by tokens.ts, which is what makes a slider re-render a specimen
+ * without touching the DOM.
+ *
+ * Nothing in this file may reference the app-chrome tokens (--ink, --accent,
+ * --line…): a preview must show the palette under test, never the bench's own.
+ */
+
+/* --------------------------------------------------------- type stage ----- */
+
+.specimen {
+  background: var(--pv-surface);
+  color: var(--pv-ink);
+  border: 1px solid var(--pv-line);
+  border-radius: 3px;
+  padding: clamp(16px, 3vw, 40px);
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.specimen-kicker {
+  font-family: var(--pv-body-family);
+  font-variation-settings: var(--pv-body-axes);
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pv-ink-dim);
+}
+
+.specimen-display {
+  font-family: var(--pv-display-family);
+  font-variation-settings: var(--pv-display-axes);
+  font-weight: var(--pv-display-weight);
+  font-size: var(--pv-display-size);
+  letter-spacing: var(--pv-display-tracking);
+  line-height: var(--pv-display-leading);
+  color: var(--pv-ink);
+  text-wrap: balance;
+  margin: 0;
+}
+
+.specimen-body {
+  font-family: var(--pv-body-family);
+  font-variation-settings: var(--pv-body-axes);
+  font-weight: var(--pv-body-weight);
+  font-size: var(--pv-body-size);
+  letter-spacing: var(--pv-body-tracking);
+  line-height: var(--pv-body-leading);
+  color: var(--pv-ink);
+  max-width: 62ch;
+}
+
+.specimen-meta {
+  font-family: var(--pv-body-family);
+  font-variation-settings: var(--pv-body-axes);
+  font-size: 13px;
+  color: var(--pv-ink-dim);
+}
+
+.specimen-glyphs {
+  font-family: var(--pv-display-family);
+  font-variation-settings: var(--pv-display-axes);
+  font-weight: var(--pv-display-weight);
+  font-size: clamp(28px, calc(var(--pv-display-size) * 0.7), 64px);
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  color: var(--pv-ink);
+  padding-top: 12px;
+  border-top: 1px solid var(--pv-line-soft);
+}
+
+.specimen-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--pv-line-soft);
+}
+
+.specimen-tag {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pv-ink-dim);
+  border: 1px solid var(--pv-line);
+  border-radius: 2px;
+  padding: 3px 7px;
+}
+
+/* ------------------------------------------------------------ buttons ----- */
+
+.pv-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.pv-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: var(--pv-pad-y) var(--pv-pad-x);
+  border: var(--pv-border-w) solid transparent;
+  border-radius: var(--pv-radius);
+  background: var(--pv-accent);
+  color: var(--pv-on-accent);
+  box-shadow: var(--pv-shadow);
+  font-family: var(--pv-body-family);
+  font-variation-settings: var(--pv-body-axes);
+  font-size: 15px;
+  font-weight: var(--pv-btn-weight);
+  letter-spacing: var(--pv-btn-tracking);
+  text-transform: var(--pv-btn-case);
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    background var(--pv-duration) var(--pv-easing),
+    color var(--pv-duration) var(--pv-easing),
+    border-color var(--pv-duration) var(--pv-easing),
+    box-shadow var(--pv-duration) var(--pv-easing),
+    transform var(--pv-duration) var(--pv-easing);
+}
+
+.pv-btn-label {
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+/* In a comparison grid the label wraps instead of blowing out its column:
+   measured at 968x875 with padding-inline at 56px, where a nowrap label made
+   the cell 272px wide inside a 235px track and Chrome widened the layout
+   viewport to 1017px to absorb it. The hero button keeps nowrap, because there
+   the recipe should read as one line. */
+.comp-cell .pv-btn,
+.mini .pv-btn,
+.tile-body .pv-btn {
+  max-width: 100%;
+}
+
+.comp-cell .pv-btn-label,
+.mini .pv-btn-label,
+.tile-body .pv-btn-label {
+  white-space: normal;
+  text-wrap: balance;
+}
+
+.pv-btn:focus-visible {
+  outline: 2px solid var(--pv-ink);
+  outline-offset: 2px;
+}
+
+/* Flat — the default. Colour change only. */
+.pv-btn--flat:hover {
+  background: var(--pv-accent-deep);
+}
+
+.pv-btn--flat:active {
+  transform: translateY(var(--pv-travel));
+}
+
+/* Hairline — outline that fills. */
+.pv-btn--hairline {
+  background: transparent;
+  color: var(--pv-ink);
+  border-color: var(--pv-line-strong);
+  box-shadow: none;
+}
+
+.pv-btn--hairline:hover {
+  background: var(--pv-accent-soft);
+  border-color: var(--pv-accent);
+  color: var(--pv-ink);
+}
+
+.pv-btn--hairline:active {
+  transform: translateY(var(--pv-travel));
+  background: var(--pv-fill-active);
+}
+
+/* Offset block — the shadow IS the travel, so the press is physical. */
+.pv-btn--offset {
+  border-color: var(--pv-ink);
+  box-shadow: var(--pv-travel) var(--pv-travel) 0 var(--pv-ink);
+}
+
+.pv-btn--offset:hover {
+  transform: translate(calc(-1 * var(--pv-travel) / 2), calc(-1 * var(--pv-travel) / 2));
+  box-shadow: calc(var(--pv-travel) * 1.6) calc(var(--pv-travel) * 1.6) 0 var(--pv-ink);
+}
+
+.pv-btn--offset:active {
+  transform: translate(var(--pv-travel), var(--pv-travel));
+  box-shadow: 0 0 0 var(--pv-ink);
+}
+
+/* Sweep — adapted from Hover.css hvr-sweep-to-right (MIT). */
+.pv-btn--sweep {
+  background: transparent;
+  color: var(--pv-ink);
+  border-color: var(--pv-ink);
+  box-shadow: none;
+}
+
+.pv-btn--sweep::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--pv-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--pv-duration) var(--pv-easing);
+}
+
+.pv-btn--sweep:hover {
+  color: var(--pv-on-accent);
+}
+
+.pv-btn--sweep:hover::before {
+  transform: scaleX(1);
+}
+
+.pv-btn--sweep:active {
+  transform: translateY(var(--pv-travel));
+}
+
+/* Grown underline — adapted from Hover.css hvr-underline-from-left (MIT). */
+.pv-btn--underline {
+  background: transparent;
+  color: var(--pv-ink);
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  padding-inline: 2px;
+  padding-block: calc(var(--pv-pad-y) / 2);
+  overflow: visible;
+}
+
+.pv-btn--underline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--pv-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--pv-duration) var(--pv-easing);
+}
+
+.pv-btn--underline:hover {
+  color: var(--pv-accent-deep);
+}
+
+.pv-btn--underline:hover::after {
+  transform: scaleX(1);
+}
+
+/* Lift — the one soft-shadow recipe. */
+.pv-btn--lift:hover {
+  transform: translateY(calc(-1 * var(--pv-travel)));
+  box-shadow: 0 calc(6px + var(--pv-travel) * 2) calc(14px + var(--pv-travel) * 3)
+    color-mix(in srgb, var(--pv-ink) 24%, transparent);
+  background: var(--pv-accent-deep);
+}
+
+.pv-btn--lift:active {
+  transform: translateY(0);
+  box-shadow: var(--pv-shadow);
+}
+
+/* Secondary sits under the primary in every recipe. */
+.pv-btn.is-secondary {
+  background: transparent;
+  color: var(--pv-ink);
+  border-color: var(--pv-line-strong);
+  box-shadow: none;
+}
+
+.pv-btn.is-secondary:hover {
+  background: var(--pv-fill);
+  border-color: var(--pv-ink);
+  color: var(--pv-ink);
+  transform: none;
+  box-shadow: none;
+}
+
+.pv-btn--offset.is-secondary {
+  border-color: var(--pv-ink);
+  box-shadow: var(--pv-travel) var(--pv-travel) 0 var(--pv-line-strong);
+}
+
+.pv-btn--sweep.is-secondary::before,
+.pv-btn--underline.is-secondary::after {
+  background: var(--pv-line-strong);
+}
+
+/* ------------------------------------------------------------- mockup ----- */
+
+.mockup {
+  background: var(--pv-surface);
+  border: 1px solid var(--pv-line);
+  border-radius: 3px;
+  padding: clamp(12px, 2vw, 24px);
+  display: grid;
+  gap: 20px;
+  color: var(--pv-ink);
+  min-width: 0;
+}
+
+.mk-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--pv-line);
+}
+
+.mk-brand {
+  font-family: var(--pv-display-family);
+  font-variation-settings: var(--pv-display-axes);
+  font-weight: 640;
+  font-size: 19px;
+  letter-spacing: var(--pv-display-tracking);
+}
+
+.mk-links {
+  display: flex;
+  gap: 16px;
+  font-family: var(--pv-body-family);
+  font-variation-settings: var(--pv-body-axes);
+  font-size: 13px;
+  color: var(--pv-ink-dim);
+}
+
+.mk-links .is-current {
+  color: var(--pv-accent);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--pv-accent);
+}
+
+.mk-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  background: var(--pv-surface-raised);
+  border: 1px solid var(--pv-line-soft);
+  border-radius: var(--pv-radius);
+  padding: 14px;
+}
+
+.mk-thumb {
+  display: grid;
+  place-items: center;
+  min-height: 116px;
+  border-radius: calc(var(--pv-radius) - 2px);
+  border: 1px solid var(--pv-line);
+  background:
+    repeating-linear-gradient(
+      135deg,
+      var(--pv-fill) 0 8px,
+      var(--pv-fill-hover) 8px 16px
+    );
+}
+
+.mk-thumb-note {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--pv-ink-dim);
+}
+
+.mk-card-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mk-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mk-badge {
+  font-family: var(--pv-body-family);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--pv-accent-deep);
+  background: var(--pv-accent-soft);
+  border: 1px solid var(--pv-accent);
+  border-radius: 2px;
+  padding: 3px 8px;
+}
+
+.mk-price {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--pv-ink);
+}
+
+.mk-title {
+  font-family: var(--pv-display-family);
+  font-variation-settings: var(--pv-display-axes);
+  font-weight: 620;
+  font-size: clamp(18px, 2.4vw, 25px);
+  line-height: 1.16;
+  letter-spacing: var(--pv-display-tracking);
+  margin: 0;
+}
+
+.mk-body {
+  font-family: var(--pv-body-family);
+  font-variation-settings: var(--pv-body-axes);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--pv-ink-dim);
+  max-width: 56ch;
+}
+
+.mk-field {
+  display: grid;
+  gap: 6px;
+}
+
+.mk-label {
+  font-family: var(--pv-body-family);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pv-ink-dim);
+}
+
+.mk-input {
+  min-height: 44px;
+  padding: 0 12px;
+  background: var(--pv-surface);
+  color: var(--pv-ink);
+  border: var(--pv-border-w) solid var(--pv-line-strong);
+  border-radius: var(--pv-radius);
+  font-family: var(--pv-body-family);
+  transition:
+    border-color var(--pv-duration) var(--pv-easing),
+    box-shadow var(--pv-duration) var(--pv-easing);
+}
+
+.mk-input:focus {
+  outline: none;
+  border-color: var(--pv-accent);
+  box-shadow: 0 0 0 3px var(--pv-accent-soft);
+}
+
+.mk-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 1px solid var(--pv-line);
+}
+
+.mk-stat {
+  display: grid;
+}
+
+.mk-stat-value {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  line-height: 1.1;
+  color: var(--pv-accent-deep);
+}
+
+.mk-stat-label {
+  font-family: var(--pv-body-family);
+  font-size: 11.5px;
+  color: var(--pv-ink-dim);
+}
+
+.mk-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-family: var(--pv-body-family);
+  font-size: 12px;
+  color: var(--pv-ink-dim);
+}
+
+/* ---------------------------------------------- components micro demos ----- */
+
+.comp-hero {
+  display: grid;
+  gap: 14px;
+  padding: clamp(16px, 3vw, 32px);
+  background: var(--pv-surface);
+  border: 1px solid var(--pv-line);
+  border-radius: 3px;
+  color: var(--pv-ink);
+}
+
+.comp-hero-label {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pv-ink-dim);
+}
+
+.comp-origin,
+.comp-use {
+  font-family: var(--pv-body-family);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--pv-ink-dim);
+  max-width: 68ch;
+}
+
+.comp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.comp-cell {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: var(--pv-surface);
+  border: 1px solid var(--pv-line-soft);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--pv-ink);
+}
+
+.comp-cell.is-current {
+  border-color: var(--pv-accent);
+  background: var(--pv-surface-raised);
+}
+
+.comp-cell-name {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pv-ink-dim);
+}
+
+.comp-micro {
+  display: grid;
+  gap: 14px;
+  padding: clamp(14px, 2vw, 24px);
+  background: var(--pv-surface);
+  border: 1px solid var(--pv-line);
+  border-radius: 3px;
+  color: var(--pv-ink);
+}
+
+.comp-micro-title {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pv-ink-dim);
+}
+
+.comp-micro-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  align-items: flex-start;
+}
+
+.comp-micro-item {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.comp-micro-label {
+  font-family: var(--pv-body-family);
+  font-size: 11.5px;
+  color: var(--pv-ink-dim);
+}
+
+.pv-switch {
+  width: 62px;
+  height: 36px;
+  padding: 4px;
+  background: var(--pv-fill);
+  border: var(--pv-border-w) solid var(--pv-line-strong);
+  border-radius: var(--pv-radius);
+  cursor: pointer;
+  transition:
+    background var(--pv-duration) var(--pv-easing),
+    border-color var(--pv-duration) var(--pv-easing);
+}
+
+.pv-switch-knob {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: calc(var(--pv-radius) - 2px);
+  background: var(--pv-neutral-solid);
+  transition: transform var(--pv-duration) var(--pv-easing), background var(--pv-duration) linear;
+}
+
+.pv-switch[aria-checked="true"] {
+  background: var(--pv-accent-soft);
+  border-color: var(--pv-accent);
+}
+
+.pv-switch[aria-checked="true"] .pv-switch-knob {
+  transform: translateX(26px);
+  background: var(--pv-accent);
+}
+
+.pv-input {
+  min-height: 44px;
+  padding: 0 12px;
+  background: var(--pv-surface);
+  color: var(--pv-ink);
+  border: var(--pv-border-w) solid var(--pv-line-strong);
+  border-radius: var(--pv-radius);
+  font-family: var(--pv-body-family);
+  transition:
+    border-color var(--pv-duration) var(--pv-easing),
+    box-shadow var(--pv-duration) var(--pv-easing);
+}
+
+.pv-input:focus {
+  outline: none;
+  border-color: var(--pv-accent);
+  box-shadow: 0 0 0 3px var(--pv-accent-soft);
+}
+
+.pv-lift-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px 18px;
+  background: var(--pv-surface-raised);
+  border: var(--pv-border-w) solid var(--pv-line);
+  border-radius: var(--pv-radius);
+  box-shadow: var(--pv-shadow);
+  cursor: pointer;
+  transition:
+    transform var(--pv-duration) var(--pv-easing),
+    box-shadow var(--pv-duration) var(--pv-easing);
+}
+
+.pv-lift-card:hover,
+.pv-lift-card:focus-visible {
+  transform: translateY(calc(-1 * var(--pv-travel)));
+  box-shadow: 0 calc(6px + var(--pv-travel) * 2) calc(16px + var(--pv-travel) * 3)
+    color-mix(in srgb, var(--pv-ink) 22%, transparent);
+  outline: none;
+}
+
+.pv-lift-title {
+  font-family: var(--pv-display-family);
+  font-variation-settings: var(--pv-display-axes);
+  font-weight: 620;
+  font-size: 16px;
+}
+
+.pv-lift-sub {
+  font-family: var(--pv-body-family);
+  font-size: 12px;
+  color: var(--pv-ink-dim);
+}
+
+/* -------------------------------------------------------------- minis ----- */
+
+.mini {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: var(--pv-surface);
+  color: var(--pv-ink);
+}
+
+.mini-display {
+  font-size: clamp(18px, 3vw, 26px);
+  line-height: 1.1;
+}
+
+.mini-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-width: none;
+}
+
+.mini-caption {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--pv-ink-dim);
+}
+
+.swatch-row {
+  display: flex;
+  height: 30px;
+  border: 1px solid var(--pv-line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.swatch-cell {
+  flex: 1 1 0;
+}
+
+.swatch-accent {
+  flex: 1.4 1 0;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.25);
+}
+
+.mini-mock {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: var(--pv-surface-raised);
+  border: 1px solid var(--pv-line-soft);
+  border-radius: var(--pv-radius);
+}
+
+.mini-mock-title {
+  font-family: var(--pv-display-family);
+  font-variation-settings: var(--pv-display-axes);
+  font-weight: 620;
+  font-size: 15px;
+}
+
+.mini-mock-body {
+  font-family: var(--pv-body-family);
+  font-size: 12px;
+  color: var(--pv-ink-dim);
+}
+
+.mini-comp {
+  background: var(--pv-surface);
+}
+
+@media (min-width: 620px) {
+  .mk-card {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    align-items: start;
+  }
+}

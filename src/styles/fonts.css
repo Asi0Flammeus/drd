@@ -1,0 +1,50 @@
+/*
+ * The five curated families, self-hosted. No CDN, no Google Fonts link: the
+ * whole app has to open with the network off, and these files are the content.
+ *
+ * Each woff2 is the `latin` variable subset fonts.gstatic.com serves for the
+ * full axis range (downloaded 2026-09-16). Licences: all five SIL OFL 1.1 —
+ * see public/fonts/LICENSES.md for the copyright lines and upstream repos.
+ */
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/fonts/bricolage-grotesque.woff2") format("woff2");
+  font-weight: 200 800;
+  font-stretch: 75% 100%;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("/fonts/fraunces.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Recursive";
+  src: url("/fonts/recursive.woff2") format("woff2");
+  font-weight: 300 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anybody";
+  src: url("/fonts/anybody.woff2") format("woff2");
+  font-weight: 100 900;
+  font-stretch: 50% 150%;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/newsreader.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}

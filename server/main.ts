@@ -24,6 +24,7 @@ import {
   serveFile,
 } from "./http.ts";
 import type { Route } from "./http.ts";
+import { healthRoutes } from "./routes/health.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { captureRoutes, startCapture } from "./routes/captures.ts";
 import { libraryRoutes } from "./routes/library.ts";
@@ -33,6 +34,7 @@ import { assistantRoutes } from "./routes/assistant.ts";
 import { parseUserUrl } from "./capture/url-guard.ts";
 
 const routes: Route[] = [
+  ...healthRoutes,
   ...authRoutes,
   ...captureRoutes,
   ...libraryRoutes,

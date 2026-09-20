@@ -1,0 +1,82 @@
+# DRD — production compose for a single host behind a TLS reverse proxy.
+#
+# The container listens on 5178 and is published on 127.0.0.1:4354 only: this
+# app must never be reachable except through the proxy that terminates TLS for
+# dnd.alysis.cat, because the session cookie is Secure and the capture splat
+# is a GET with a side effect.
+
+services:
+  drd:
+    build: .
+    image: drd:latest
+    container_name: drd
+    restart: unless-stopped
+
+
+    # A bind mount keeps the host's ownership, so the container has to run as
+    # the uid that owns ./data or SQLite opens read-only. Default is the image
+    # user; on this host, export DRD_UID=$(id -u) DRD_GID=$(id -g) — or chown
+    # ./data to 10001 and leave these alone.
+    user: "${DRD_UID:-10001}:${DRD_GID:-0}"
+
+    ports:
+      # host:container — loopback only, on purpose.
+      - "127.0.0.1:4354:5178"
+
+    environment:
+      NODE_ENV: production
+      DRD_HOST: 0.0.0.0
+      DRD_PORT: "5178"
+      DRD_DATA_DIR: /app/data
+      DRD_CLIENT_DIR: /app/dist/client
+      # The origin the browser actually sees. Drives Secure cookies and the
+      # Origin check on mutating requests, so it must match the proxy exactly.
+      DRD_PUBLIC_ORIGIN: ${DRD_PUBLIC_ORIGIN:-https://dnd.alysis.cat}
+      # Invite-capable: registration stays open only to whoever holds the code.
+      # Set DRD_INVITE_CODE in a local .env (gitignored) or the host's secret
+      # store; leaving it empty with registration open means anyone can sign up.
+      DRD_REGISTRATION_OPEN: ${DRD_REGISTRATION_OPEN:-true}
+      DRD_INVITE_CODE: ${DRD_INVITE_CODE:-}
+      # Chrome's namespace sandbox needs unprivileged user namespaces. This
+      # compose file grants them through the seccomp profile below, so the
+      # sandbox stays ON. Flip to "1" only if the host kernel refuses, and read
+      # docs/DEPLOY.md before you do.
+      DRD_CHROME_NO_SANDBOX: ${DRD_CHROME_NO_SANDBOX:-0}
+      DRD_CAPTURE_CONCURRENCY: ${DRD_CAPTURE_CONCURRENCY:-1}
+      DRD_CAPTURE_PER_USER_PER_HOUR: ${DRD_CAPTURE_PER_USER_PER_HOUR:-60}
+
+    volumes:
+      # The entire application state: SQLite file plus captured media.
+      - ./data:/app/data
+
+    # Chrome's namespace sandbox needs unprivileged user namespaces, which
+    # Docker's default seccomp profile denies (clone() is masked to forbid
+    # CLONE_NEWUSER). docker/chrome-seccomp.json is that same profile with
+    # only that restriction lifted — measured, not assumed: with the default
+    # profile Chrome dies with "No usable sandbox", with this one it starts
+    # and captures. Chrome's layer-1 zygote also chroots itself into an empty
+    # directory, so SYS_CHROOT is the single capability granted — SYS_ADMIN is
+    # not, and everything else is dropped.
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_CHROOT
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/chrome-seccomp.json
+
+    # Chrome needs real shared memory; the 64 MB default makes it crash on
+    # large pages. A tmpfs is cheaper and cleaner than --shm-size.
+    tmpfs:
+      - /dev/shm:size=512m
+      - /tmp:size=256m
+
+    # A runaway page must not take the host with it.
+    mem_limit: ${DRD_MEM_LIMIT:-2g}
+    pids_limit: 512
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

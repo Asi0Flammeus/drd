@@ -148,6 +148,36 @@ target under 48 px on a device that reports no hover.
 
 ---
 
+## Deploying
+
+One container, one bind-mounted `./data`, one reverse proxy:
+
+```
+cp .env.example .env                        # set DRD_INVITE_CODE
+export DRD_UID=$(id -u) DRD_GID=$(id -g)    # the uid that owns ./data
+docker compose build && docker compose up -d
+curl -s http://127.0.0.1:4354/healthz
+```
+
+The image publishes on `127.0.0.1:4354` only — TLS for `dnd.alysis.cat`
+terminates in the proxy in front, and the proxy must forward the *whole* path
+space, because `dnd.alysis.cat/https://some-site.fr` is the capture shortcut.
+
+`/healthz` is the real thing, not a constant: it reports the applied schema,
+whether a browser binary is there, which sandbox mode Chrome is in, the
+capture queue depth, and whether the client was built into the image — and
+returns 503 when any of those would make a capture fail.
+
+Chromium runs **with its sandbox on** inside the container: Docker's default
+seccomp profile blocks the user namespace it needs, so the compose file ships
+that same profile with only that restriction lifted, plus the single
+`SYS_CHROOT` capability. `DRD_CHROME_NO_SANDBOX=1` is the documented fallback
+for hosts that refuse unprivileged user namespaces.
+[`docs/DEPLOY.md`](docs/DEPLOY.md) has the measurements behind each of those
+choices, the nginx block, and the pre-DNS checklist.
+
+---
+
 ## Security
 
 The capture endpoint is a server-side request forgery primitive by

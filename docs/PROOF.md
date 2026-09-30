@@ -4,6 +4,46 @@ Status on 2026-09-30, after the S9 pass on **prod**. Verdict: **NO-SHIP**
 (blockers at the end). The build rows below the S9 section are kept as the
 record of the build run.
 
+## After S9: fixes 6f69b80 and 0888dd3 (30/09, 12:15–13:10 UTC), not deployed
+
+Verdict unchanged: **NO-SHIP** until the deploy and the prod re-shoot below.
+
+P1/M1 were measured in a throwaway container with prod's limits (2 GB,
+same seccomp, tmpfs), the working tree mounted, cgroup sampled every
+100 ms (kernel 5.15 has no `memory.peak`; "peak" is memory.current minus
+inactive_file, what docker stats shows):
+
+| nematis | before (f626f25) | after (0888dd3) |
+|---|---|---|
+| result | chrome OOM-killed in 2 of 2 runs, capture failed at 150 s | ready in 52.9 s (load 2.5, scroll 4.4, dom 2.2, fonts 3.1, tiles 24.5, stitch 1.6, hover 12.2, specimens 2.2) |
+| peak | 2048 MB (the limit) | 1521 MB, oom_kill 0 |
+| CPU | n/a | 136 s, from 279 s three changes earlier |
+
+Causes found, each measured: hiding nematis' fixed 3D canvas made it replay
+the hidden time when shown (5 s hidden gave a 24 s stall, 20 s gave 57 s);
+`stats()` on an extract of a raw frame read the whole frame (~0.5 s per
+crop, 20 ms materialised); the renderer's garbage outgrew the 2 GB limit
+between two collections of its own (1.86 GB, 0.93 GB with a collection every
+200–300 ms). Not reached: 1 GB. At the end of the reveal pass the page's own
+renderer holds ~1.2 GB (memory-infra: canvas 632 MB, malloc 671 MB) plus
+three Cloudflare Stream players; one renderer process for all frames saved
+170 MB and was not kept.
+
+C1 on asi0's two legacy palettes, run on a copy of prod data: linear.app
+18 raw colours → Fond #08090a, Surface #0f1011, Texte #f7f8f8, Texte 2
+#8a8f98, Bordure #ffffff (no accent: v1 never saw the lime); mamielasagnes
+11 → Fond #f6eccc, Surface #ffffff, Texte #321108, Texte 2 #121212, Accent
+#d5360d, Accent 2 #9a905c, Bordure #0b4951. why/what/tags untouched, v1
+payload kept in `provenance.rederived.previous`, idempotent on a second run.
+Every v2 capture's palette is unchanged except nematis, which loses #ff0000.
+
+Tests: 24 pass, typecheck and build clean.
+
+Still to do: back up and fingerprint asi0's data, deploy once, then on prod
+through a throwaway account: every row these fixes touch (I-01, I-06, I-12,
+I-14, I-16, I-18, I-19, I-22, I-24, I-26 partial path on a copy of a v1
+capture, I-28, I-29 at both sizes), and the fingerprint diff.
+
 ## S9: every interaction on prod (30/09, 11:20–12:10 UTC)
 
 How: a dedicated account `maia-proof+drd@alysis.cat`, created through the

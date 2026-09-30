@@ -34,7 +34,12 @@ ENV NODE_ENV=production \
     DRD_PORT=5178 \
     DRD_DATA_DIR=/app/data \
     DRD_CLIENT_DIR=/app/dist/client \
-    NODE_OPTIONS=--disable-warning=ExperimentalWarning
+    NODE_OPTIONS=--disable-warning=ExperimentalWarning \
+    MALLOC_ARENA_MAX=2
+
+# MALLOC_ARENA_MAX: libvips (sharp) decodes on every core, and glibc gives each
+# thread its own arena that it never hands back. With two arenas and sharp's
+# cache off, the server held ~350 MB through a nematis capture, ~480 MB before (M1).
 
 # Chrome's own runtime libraries, plus fonts — without fonts a captured page
 # renders in a fallback face and every typography reference is a lie.

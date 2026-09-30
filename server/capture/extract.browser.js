@@ -127,7 +127,12 @@
   function backdropAt(x, y) {
     const layers = [];
     let image = false;
+    // Once fixed layers are hidden for the tile pass, a fixed background
+    // layer that stays painted is not what lies behind the content either:
+    // the grid reads the page as it did when every fixed layer was hidden.
+    const hidden = Boolean(doc.getElementById("drd-hide-fixed"));
     for (const el of doc.elementsFromPoint(x, y)) {
+      if (hidden && el.closest("[data-drd-f]")) continue;
       const tag = el.tagName;
       if (tag === "IMG" || tag === "VIDEO" || tag === "CANVAS" || tag === "PICTURE" || tag === "IFRAME") {
         image = true;
@@ -210,7 +215,11 @@
     if (mode === "hideFixed" && !style) {
       style = doc.createElement("style");
       style.id = "drd-hide-fixed";
-      style.textContent = "[data-drd-f]{visibility:hidden!important}";
+      // A fixed canvas, video or frame is a background painted behind every
+      // screen, so it stays. Hidden, nematis' 3D canvas replayed the hidden
+      // time when shown again: a main-thread stall of 3 to 4 times the time
+      // hidden, 40-60 s after a tile pass (measured, 30/09).
+      style.textContent = "[data-drd-f]:not(canvas):not(video):not(iframe){visibility:hidden!important}";
       (doc.head || root).appendChild(style);
     }
     if (mode === "showFixed" && style) style.remove();
@@ -297,24 +306,31 @@
   }
 
   if (mode === "specimen") {
+    // One row per family × weight, stacked in a single fixed column so the
+    // whole batch is one screenshot (P1: one frame each cost 1-2 s on a busy page).
     const old = doc.getElementById("drd-specimen");
     if (old) old.remove();
-    const node = doc.createElement("div");
-    node.id = "drd-specimen";
-    node.textContent = arg.text;
-    node.setAttribute(
-      "style",
-      [
-        "position:fixed", "left:0", "top:0", "z-index:2147483647", "margin:0", "padding:18px 22px",
-        "background:#ffffff", "color:#161616", "white-space:nowrap", "font-size:44px", "line-height:1.25",
-        `font-family:${arg.stack}`, `font-weight:${arg.weight}`, `font-style:${arg.italic ? "italic" : "normal"}`,
-        "letter-spacing:0", "text-transform:none", "font-variation-settings:normal", "opacity:1", "visibility:visible",
-        "transform:none", "filter:none", "max-width:none", "width:auto",
-      ].join(";"),
-    );
-    root.appendChild(node);
-    const r = node.getBoundingClientRect();
-    return viewBox(r);
+    const column = doc.createElement("div");
+    column.id = "drd-specimen";
+    column.setAttribute("style", "position:fixed;left:0;top:0;z-index:2147483647;margin:0;padding:0;display:flex;flex-direction:column;align-items:flex-start;opacity:1;visibility:visible;transform:none;filter:none");
+    const rows = arg.fonts.map((font) => {
+      const node = doc.createElement("div");
+      node.textContent = arg.text;
+      node.setAttribute(
+        "style",
+        [
+          "position:static", "margin:0", "padding:18px 22px",
+          "background:#ffffff", "color:#161616", "white-space:nowrap", "font-size:44px", "line-height:1.25",
+          `font-family:${font.stack}`, `font-weight:${font.weight}`, `font-style:${font.italic ? "italic" : "normal"}`,
+          "letter-spacing:0", "text-transform:none", "font-variation-settings:normal", "opacity:1", "visibility:visible",
+          "transform:none", "filter:none", "max-width:none", "width:auto",
+        ].join(";"),
+      );
+      column.appendChild(node);
+      return node;
+    });
+    root.appendChild(column);
+    return rows.map((node) => viewBox(node.getBoundingClientRect()));
   }
 
   if (mode === "unspecimen") {

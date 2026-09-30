@@ -1,22 +1,153 @@
 # DRD redesign: proof
 
-Status on 2026-09-30, end of the build run. This is a record of what was
-observed, not a ship verdict: S9 (the full review of every interaction on
-the real surface) is **not done**, and the rows below say where evidence is
-missing.
+Status on 2026-09-30, after the S9 pass on **prod**. Verdict: **NO-SHIP**
+(blockers at the end). The build rows below the S9 section are kept as the
+record of the build run.
+
+## S9: every interaction on prod (30/09, 11:20–12:10 UTC)
+
+How: a dedicated account `maia-proof+drd@alysis.cat`, created through the
+app's own register form with the instance invite code, used in headless
+Chromium on https://dnd.alysis.cat at 968 × 875 and 412 × 915 (dark scheme,
+DPR 1, touch at 412, clipboard permission granted so copies were read back).
+Captures: maisoncyrah.fr (×2), linear.app, www.nematis.com, mamielasagnes.fr,
+example.com/.org/.net/.edu, www.iana.org, httpbin.org/status/503 (failure),
+p-com.studio, fontshare.com, typewolf.com. Screenshots of third-party pages:
+`docs/proof-private/s9/` (gitignored).
+
+asi0's data: backup `data/backups/drd-20260930-pre-s9-proof.sqlite` before,
+`…-pre-proof-account-delete.sqlite` before the deletion. Fingerprint of
+every row he owns (users, captures 8, elements 333, links 206, analyses 8,
+findings 233, items 4, item_colors 30, fts 4, boards 1, board_items 2,
+signals 4, blobs 5) plus his 518 media files and 5 blob files:
+`f80bc4a579891a5826afa61b` before and after, identical table by table.
+
+The account was deleted at the end: `DELETE FROM items_fts` for its items,
+then `DELETE FROM users` with `foreign_keys=ON` (cascade: 15 captures, 13
+items, 5 boards, 2 packs, 2 sessions, 2 candidates, 20 signals), its 15
+media folders removed, 41 unreferenced blobs collected. No orphan elements
+or analyses; `integrity_check` ok; one user left.
+
+Result: ✔ observed; ◐ works with a defect or only part observed; ✖ not
+proven. **968: 22 ✔, 7 ◐, 0 ✖. 412: 24 ✔, 5 ◐, 0 ✖.**
+
+| # | 968 | 412 | Observed on prod |
+|---|---|---|---|
+| I-01 Capturer une URL | ✔ | ✔ | Live stages shot at each step (maisoncyrah 18.7 s, linear 42 s, nematis 131.6 s, mamielasagnes 42 s). Defect D1: between the capture and its analysis the row showed « analyse v1 » with no stages. |
+| I-02 Capturer par partage | ✔ | ✔ | Manifest `share_target` is `GET /share` with title/text/url. A navigation to `/share?text=Regarde ça https://example.com/ …` (what Chrome's share sheet sends) opened the new capture's progress, signed in, both sizes. No Android device: the OS share sheet itself was simulated. |
+| I-03 Capturer par raccourci | ✔ | ✔ | Signed in: `dnd.alysis.cat/https://example.net/` → capture page. Signed out (fresh context): login page shows « À capturer après connexion : … », login → capture starts. |
+| I-04 Suivre et réessayer | ✔ | ✔ | httpbin 503: « Le site a répondu 503. » + Réessayer; each retry is a new row, the attempts list keeps all three. |
+| I-05 Changer d'onglet | ◐ | ✔ | Six tabs swap content and hash; back returns to the previous tab. Sticky checked at 412 (tab bar at top after 763 px scroll), not at 968. |
+| I-06 Choisir une couleur | ◐ | ◐ | Band gets `aria-pressed`, detail row updates. Defect D2: the row clips OKLCH/hex/uses with an ellipsis (hex hidden at both sizes). |
+| I-07 Localiser | ✔ | ✔ | 968: pane outlines (Texte 2: 1, component: 1). 412: « Accent localisé à 8 endroits » opens the full-screen viewer with 8 outlines. |
+| I-08 Copier une valeur | ✔ | ✔ | Clipboard read back: `#374151`, `oklch(0.373 0.031 260)`, `oklch(…) /* #… */`; toast « Copié ». |
+| I-09 Garder en un tap | ✔ | ✔ | Gardé after 35 ms (968) / 21 ms (412); item in its library. |
+| I-10 Dire pourquoi | ✔ | ✔ | Chip + typed text saved to `why`, shown in the row, chip became a tag. |
+| I-11 Annuler | ✔ | ✔ | Library count 1 → 0, button back to Garder, toast « Retiré de la bibliothèque ». |
+| I-12 Ranger dans un tableau | ◐ | ✔ | Long-press (968) and chevron (412) open the picker; board created/used; fiche lists the board. Defect D4: tapping Gardé in the component sheet opens the fiche under the still-open sheet. |
+| I-13 Doublon proche | ✔ | ✔ | Recaptured maisoncyrah: « Proche de « Maison Cyrah » (Palettes) » / « Accent #186063 »; Fusionner left one item with both reasons and 2 sources. |
+| I-14 Inspecter un composant | ✔ | ✔ | Sheet: rest + hover crops, token table, CSS, Copier le CSS (clipboard checked), Garder. Defect D5: the CSS ignores the hover diff. |
+| I-15 Lire un contraste | ✔ | ✔ | « Aa » on the real pair, ratio, grade; white on accent 2 2,0 échec. |
+| I-16 Voir l'échelle typo | ✔ | ✔ | Real crops with size/lh/weight/tracking; « Échelle libre … meilleur rapport à 2,2 %, non retenu ». |
+| I-17 Chercher | ✔ | ✔ | `lineaire` and `sombre maitrise` find « Linear » (accents ignored); `serif chaud` counts Typos 2 across tabs. |
+| I-18 Filtrer par teinte | ◐ | ✔ | Pasted `#186063` → 2 items Δ 0; ring tap at 110° → Linear (#e4f222 Δ 0.011). Defect D7: Enter in the hex field reopens the sheet. |
+| I-19 Filtrer | ◐ | ◐ | Sans raison, Source, Tableau, Serif, Bouton, Clair all filter the list. Defect D11: with Sans raison the library tab counts do not change. |
+| I-20 Ouvrir une fiche | ✔ | ✔ | Detail pane / page; why edited inline survives a reload and shows in the row. |
+| I-21 Sélectionner plusieurs | ✔ | ✔ | Bar « 2 sélectionnés · Ajouter au tableau · Exporter · Supprimer »; add worked; Supprimer asks for confirmation (confirmed at 968, cancelled at 412). |
+| I-22 Créer et parcourir un tableau | ✔ | ✔ | Boards created at both sizes; « Preuve S9 » is a mixed grid (component, mood, 2 palettes). Defect D8: the cover mosaic leaves palette cells empty. |
+| I-23 Copier en CSS / Tailwind / JSON | ✔ | ✔ | Clipboard contents: `:root` block, `@theme` block, DTCG JSON; the JSON passes the official schema, the `@theme` compiles with Tailwind 4.3.3. |
+| I-24 Exporter un pack agent | ✔ | ◐ | Refusal for a one-host selection (button disabled), « Seulement 2 sources », missing-reason warnings, ZIP downloaded at both sizes. The typography pack (412) failed DTCG validation: D12. |
+| I-25 Composer dans l'Atelier | ✔ | ✔ | Palette + typo re-render the mini page; « Garder le mélange » created a board. |
+| I-26 Réanalyser | ◐ | ◐ | Réanalyser on a v2 capture replaced its analysis (new id, both sizes). The partial path needs a v1 capture; only asi0 owns v1 captures on prod, so it was not exercised with the proof account. |
+| I-27 Supprimer une capture | ✔ | ✔ | Deleted captures with kept items: capture 404, every kept blob still 200 (typo 3, component 2, mood 6, scale 7), fiches show their images. |
+| I-28 Hors ligne | ✔ | ✔ | Service worker controlled, offline emulation: analysis, library and fiche from cache with « hors ligne · cache », why disabled, Garder disabled with its reason. D10: two stacked offline banners on Analyse. |
+| I-29 Accepter une piste | ◐ | ◐ | 968: Capturer on p-com.studio started and finished a capture. 412: Écarter on jeremiahshoaf.com hid it, and a refresh did not bring it back. Only one candidate existed at a time, so each size saw one of the two actions. |
+
+### Defects found
+
+| | Defect | State |
+|---|---|---|
+| D1 | Capture row reads « analyse v1 » without stages in the gap before the analysis starts | fixed in source, not deployed |
+| D2 | Picked colour row clips hex/OKLCH/uses | fixed in source (wraps), not deployed |
+| D3 | « 1 styles »: counts without singular | fixed in source, not deployed |
+| D4 | A sheet stays open over the next screen | fixed in source (route change closes open dialogs), not deployed |
+| D5 | Component CSS snippet has no `:hover` rule | open |
+| D6 | `type=url` field refuses `maisoncyrah.fr` with an English browser bubble | fixed in source (`novalidate`, server parses), not deployed |
+| D7 | Enter in the hue sheet's hex field reopens the sheet | fixed in source (`preventDefault`), not deployed |
+| D8 | Board mosaic empty for palette items | open |
+| D10 | Two offline banners on Analyse | open |
+| D11 | Library tab counts ignore « Sans raison » | fixed in source, not deployed |
+| D12 | Typography `letterSpacing` exported in `em`: invalid DTCG 2025.10 | fixed + `test/tokens.test.ts` (fails without the fix, passes with it), not deployed |
+| C1 | Legacy « Palette — linear.app » (asi0's, v1): 18 raw colours incl. `#00ff05`, `#f34e52`, `#f79ce0`, theme wrongly `light`. Same class in v2: nematis Accent `#ff0000` from 4 elements, 0.07 % of text (fallback rule « chroma × usage » with no floor) | open, analysed (below) |
+| C2 | Legacy « Typographies — linear.app »: samples are the first 4 elements by y (nav pills « Resources », « Linear », « Pulse ») | open, analysed (below) |
+| P1 | nematis capture 127.6 s on prod (deadline 150 s) | profiled, open |
+| M1 | Chrome renderer OOM-killed in the drd cgroup | cause found, open |
+
+C1, analysed on the stored captures with the current analysis (read-only
+probe): two rule changes give the curated result the spec asks for. (a) For
+v1 captures (no grid samples), a colour whose pixel cluster covers ≥ 3 % of
+the page is background area even if v1 noted it as text: linear v1 then gets
+Fond `#08090a` (69 %), Surface `#0f1011`; mamielasagnes v1 gets exactly its
+v2 roles (Fond `#f6eccc`, Surface `#ffffff`, Accent `#d5360d`, Accent 2
+`#9a905c`). (b) The accent fallback needs a floor (≥ 0.5 % of text or
+surface, or pixel-confirmed): nematis loses the `#ff0000` accent, linear v1
+loses the pink/orange guessed with zero usage. Kept items then need a
+start-up repair (like `repairLegacyItems`) that re-derives roles from the
+same capture and moves the rest to `others`; that changes asi0's two legacy
+items, so it needs his OK and a backup, which is why it is not done.
+
+C2: role specimens (display: h1 64 px « The product development system… »,
+titre: h2 40–48 px, corps: the 16 px run) exist in the same capture's
+elements; family findings should carry one crop per role and the fiche
+should show them. Not done.
+
+P1 and M1. New step timings (`meta.budget.timings`, one log line per
+capture, committed) on a local run of nematis: load 2.6 s, scroll 7.4, dom
+2.4, fonts 3.5, network 0.1, tiles 18.1, stitch 4.6, **hover 27.2**,
+**specimens 10.4** (76 s). Hover and specimens take a full DPR-2 viewport
+PNG per target; tiles decode the full PNG again for every crop. The same run
+inside the drd container (separate data dir under `/tmp`) was OOM-killed at
+12:05:01 UTC: kernel log `Memory cgroup out of memory: Killed process
+1259085 (chrome) anon-rss:1519996kB` in the drd cgroup. That was my
+profiling run, the only `oom_kill` since the container started (cgroup
+`memory.events`: oom_kill 1, max 9231). The server process survived
+(RestartCount 0, no error lines in the log, `/healthz` ok); the killed run
+was a throwaway with its own data dir, and no user capture or request was
+in flight. Still, one nematis renderer reaches 1.5 GB of the 2 GB limit, so
+a user capture beside the server is one bad page away from the same kill:
+the bound (clip screenshots for hover/specimen, decode each tile once, cap
+the renderer heap or close the page between passes) is open, and the new
+timing has not been re-measured on prod.
+
+Validators: DTCG with the official 2025.10 JSON schema
+(`designtokens.org/schemas/2025.10/format.json`, ajv, all refs): the board
+pack and both clipboard JSONs valid; the typography pack invalid (7 ×
+`letterSpacing.unit` must be px or rem); the same items re-exported after the
+D12 fix valid. Negative controls (2 components, `colorSpace: "nope"`, bare
+hex) rejected. Terrazzo `tz check` 2.7.1 accepted the invalid controls, so
+it is not used as evidence. Tailwind v4.3.3 compiled both packs' `theme.css`
+and generated `bg-linear-background`, `rounded-maison-cyrah-link-button`,
+`text-nematis-accent`.
+
+### Blockers before SHIP
+
+1. Deploy the committed fixes (D1–D4, D6, D7, D11, D12) and re-shoot I-06,
+   I-12, I-18, I-19, I-24 on prod.
+2. C1 and C2 (curated palettes, role specimens), with asi0's OK for the
+   repair of his two legacy items.
+3. P1/M1: bound the pixel pass memory and time, re-measure nematis on prod.
+4. D5, D8, D10; I-26 partial path on a v1 capture; I-29 both actions at
+   each size.
+
+## Build run record (before S9)
 
 Where it was observed:
 
 - **prod**: the `drd` container on 127.0.0.1:4354 (dnd.alysis.cat), checked
   through the API, the database and scripts run inside the container.
 - **local**: the same commit, served on 127.0.0.1:5791 from a copy of the
-  prod data taken after migration 3. Screenshots come from headless Chromium
-  with dark scheme emulated, signed in to asi0's account through a session
-  opened on that copy.
+  prod data taken after migration 3.
 
-I could not sign in to prod in a browser: asi0's password is not available
-to me, and I did not create a session on prod for his account. So every UI
-screenshot is from the **local** instance.
 
 Screenshots of real sites are in `docs/proof-private/`, which is gitignored
 because the repository is public.
@@ -114,46 +245,6 @@ How each item type renders:
 
 Board views use the same rows.
 
-## Interactions (§7)
+## Interactions at the end of the build run
 
-Result: ✔ observed; ◐ partly observed; ✖ not proven, with the reason.
-
-| # | 968 | 412 | Observed, or why not |
-|---|---|---|---|
-| I-01 Capturer une URL | ◐ | ◐ | On prod, 7 captures went through the stages load → scroll → measure → pixels → analyse → done, read from `captures.stage`. The live stage row in the UI was not screenshotted. |
-| I-02 Capturer par partage | ✖ | ✖ | `/share` and the manifest `share_target` are shipped. Not exercised on the real phone: I had no access. |
-| I-03 Capturer par raccourci | ✖ | ✖ | The splat and login-replay code paths are kept, but not exercised in this run. |
-| I-04 Suivre et réessayer | ✖ | ✖ | Réessayer and `POST /retry` (a new attempt beside the old one) are implemented. The UI was not exercised, and the failed rows were removed at asi0's request. |
-| I-05 Changer d'onglet | ◐ | ◐ | Palette, Typo, Composants, Échelles and Ambiance render at 968 and Palette at 412, with the hash updated. Back and the sticky tabs while scrolling were not checked. |
-| I-06 Choisir une couleur | ◐ | ◐ | The detail row shows role, OKLCH · hex, area and text share, and uses (Accent). Only the default selection was observed; no tap was scripted. |
-| I-07 Localiser | ◐ | ◐ | 968: the Accent outlines are drawn on the page pane. 412: the row "Accent localisé à 8 endroits" appears. The full-screen viewer was not opened. |
-| I-08 Copier une valeur | ✖ | ✖ | Copy buttons are wired to the "Copié" toast. The clipboard was not verified. |
-| I-09 Garder en un tap | ✖ | ✔ | local 412: Garder turned into Gardé at once and the item appeared in Palettes (`412-analyse-palette-maisoncyrah.png` shows the state before the tap). |
-| I-10 Dire pourquoi | ✖ | ✔ | local 412: the chip "un seul accent" plus typed text were saved to `why`, shown in the library row, and the chip became a tag (`968-bibliotheque-palettes` was taken from a later copy, so this row is not in it). |
-| I-11 Annuler | ✖ | ✖ | Implemented (`DELETE` then back to Garder); not exercised. |
-| I-12 Ranger dans un tableau | ✖ | ✖ | Picker implemented (long-press, chevron, Tableau…); not exercised. |
-| I-13 Doublon proche | ✖ | ✖ | Server duplicate rules and merge are implemented; not exercised. |
-| I-14 Inspecter un composant | ✔ | ✖ | local 968: the sheet shows the default and hover crops (sand, then dark on hover), the token table with roles, the CSS, Copier and Garder. |
-| I-15 Lire un contraste | ✔ | ✔ | "Aa" in the real pair, ratio, grade; white on sand 2.0 is marked échec. |
-| I-16 Voir l'échelle typo | ✔ | ✖ | Styles as real crops with size, line height, weight and tracking; the verdict line reads "Échelle libre" (the error of the best ratio is shown). |
-| I-17 Chercher | ◐ | ◐ | API only: `q=maitrise` found "sombre maîtrisé" (FTS5, diacritics removed). Not typed in the UI. |
-| I-18 Filtrer par teinte | ◐ | ✖ | API only: a `#e4f222` query returns the matching item (migration test). The ring UI was not exercised. |
-| I-19 Filtrer | ◐ | ◐ | The chips render with counts ("Sans raison 2"). Toggling was not exercised. |
-| I-20 Ouvrir une fiche | ✔ | ✔ | Detail pane at 968, standalone page at 412: editable why, tags, boards, source link, date kept, duplicates, CSS / Tailwind / JSON, Exporter, Supprimer. |
-| I-21 Sélectionner plusieurs | ✖ | ✖ | Implemented; not exercised. |
-| I-22 Créer et parcourir un tableau | ✖ | ✖ | Implemented; `POST /api/boards` was checked on the API. |
-| I-23 Copier en CSS / Tailwind / JSON | ◐ | ✖ | API: the copy endpoint returned a `@theme` block and DTCG JSON (`colorSpace oklch`). Clipboard and validators were not run. |
-| I-24 Exporter un pack agent | ✖ | ✖ | Wizard and server rules (refusal, < 3 hosts, missing reasons) are implemented; no ZIP was downloaded in this run. |
-| I-25 Composer dans l'Atelier | ◐ | ✖ | The Mélange screen renders with kept palettes and type (`968-atelier-melange.png`). Picking and "Garder le mélange" were not exercised. |
-| I-26 Réanalyser | ◐ | ◐ | prod: 3 v1 captures went to analysis v2 with partial = 1 through the job behind the button. The UI tap was not recorded. |
-| I-27 Supprimer une capture | ✖ | ✖ | The delete path (row, cascades, media folder) was used on prod for the failed rows, which had no kept items. Not proven for kept items keeping their crops. |
-| I-28 Hors ligne | ✖ | ✖ | Cache reads and Garder disabled are implemented; not exercised. |
-| I-29 Accepter une piste | ✖ | ✖ | Pistes live inside Captures. No candidates exist yet ("Aucune piste"). |
-
-## Known gaps, in the order I would take them
-
-1. The S9 browser pass on prod for every row above that is not ✔, which needs asi0's login or his OK for a proof account.
-2. Validate `tokens.json` with a DTCG 2025.10 validator and compile `theme.css` with Tailwind v4 (required by S6).
-3. Profile nematis (115 s of a 150 s budget).
-4. On linear, the v2 Texte role is `#d0d6e0` while headlines are `#f7f8f8`; the audit's `#1d1e20` Texte for maisoncyrah is not present in the v2 DOM, which gives `#4b5563`.
-5. `apca-w3` was not added: its licence is "Limited W3 License", which I did not confirm as compatible.
+Superseded by the S9 table above.

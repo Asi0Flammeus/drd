@@ -18,8 +18,7 @@ test("references, collections and packs survive migration 3 with the same ids", 
   // Dynamic on purpose: `config.ts` reads DRD_DATA_DIR once at import.
   const { db, migrate } = await import("../server/db.ts");
   const { blobPath } = await import("../server/library/blobs.ts");
-  const { loadPackRefs } = await import("../server/export/pack.ts");
-  const { getItem, search } = await import("../server/library/index.ts");
+  const { getItem, itemsByIds, search } = await import("../server/library/index.ts");
 
   migrate(2);
   const c = db();
@@ -71,7 +70,7 @@ test("references, collections and packs survive migration 3 with the same ids", 
 
   // The pack still resolves every item it named.
   const pack = c.prepare("SELECT item_ids FROM packs WHERE id = 'p1'").get() as { item_ids: string };
-  assert.deepEqual(loadPackRefs("u1", JSON.parse(pack.item_ids)).map((r) => r.id).sort(), ["r-comp", "r-pal", "r-site"]);
+  assert.deepEqual(itemsByIds("u1", JSON.parse(pack.item_ids)).map((i) => i.id).sort(), ["r-comp", "r-pal", "r-site"]);
 
   // Payloads in the new shape: OKLCH computed, roles as given; the script "sample" gone (W5).
   const palette = getItem("u1", "r-pal").data as { colors: { hex: string; role: string; value: { l: number } }[] };

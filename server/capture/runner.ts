@@ -18,6 +18,7 @@ import puppeteer from "puppeteer";
 import type { Browser, HTTPRequest, Page } from "puppeteer";
 import { config } from "../config.ts";
 import { db } from "../db.ts";
+import { sharedMemoryIgnoredDefaults } from "./shared-memory.ts";
 import { guardUrl, inspectUrl, isPrivateAddress, parseUserUrl } from "./url-guard.ts";
 
 const EXTRACTOR = readFileSync(fileURLToPath(new URL("./extract.browser.js", import.meta.url)), "utf8");
@@ -117,7 +118,6 @@ async function launch(hostname: string, address: string): Promise<Browser> {
     "--no-first-run",
     "--no-default-browser-check",
     "--mute-audio",
-    "--disable-dev-shm-usage",
     // The address was vetted a moment ago; pin it so the name cannot resolve
     // somewhere else between the check and the connection (DNS rebinding).
     `--host-resolver-rules=MAP ${hostname} ${address},EXCLUDE localhost`,
@@ -126,6 +126,7 @@ async function launch(hostname: string, address: string): Promise<Browser> {
   return puppeteer.launch({
     headless: true,
     args,
+    ignoreDefaultArgs: sharedMemoryIgnoredDefaults(),
     executablePath: config.capture.chromePath || undefined,
     protocolTimeout: config.capture.timeoutMs,
   });
@@ -227,14 +228,16 @@ export async function runCapture(captureId: string, requestedUrl: string): Promi
       await sleep(400);
 
       const extraction = (await page.evaluate(`${EXTRACTOR}\n()`)) as Extraction;
+      const width = extraction.page.width;
       const height = Math.min(extraction.page.height, config.capture.maxPageHeight);
+      if (!(width > 0) || !(height > 0)) throw new Error(`Page sans dimensions mesurables (${width}×${height} px).`);
 
-      const shot = await page.screenshot({
-        type: "jpeg",
-        quality: 82,
-        clip: { x: 0, y: 0, width: extraction.page.width, height, scale: 1 },
-        captureBeyondViewport: true,
-      });
+      const shot = await page
+        .screenshot({ type: "jpeg", quality: 82, clip: { x: 0, y: 0, width, height, scale: 1 }, captureBeyondViewport: true })
+        .catch((error: unknown) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`Chrome n'a pas pu photographier la page entière (${width}×${height} px) : ${reason}`);
+        });
       writeFileSync(join(dir, "page.jpg"), shot);
 
       const elements = pickElements(extraction.elements, height);

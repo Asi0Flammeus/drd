@@ -11,13 +11,12 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { config } from "../config.ts";
 import { db } from "../db.ts";
+import { blobPath } from "../library/blobs.ts";
 import { zip } from "./zip.ts";
 import type { ZipEntry } from "./zip.ts";
 
-export type PackRow = { id: string; user_id: string; name: string; brief: string; ref_ids: string; created_at: string };
+export type PackRow = { id: string; user_id: string; name: string; brief: string; item_ids: string; created_at: string };
 
 type RefRow = {
   id: string;
@@ -70,11 +69,12 @@ export function loadPackRefs(userId: string, refIds: string[]): Ref[] {
   const placeholders = refIds.map(() => "?").join(", ");
   const rows = db()
     .prepare(
-      `SELECT r.id, r.type, r.title, r.source_url, r.source_host, r.image, r.payload, r.provenance,
-              r.what, r.why, r.tags, r.created_at,
+      `SELECT i.id, i.kind AS type, i.title, i.source_url, i.source_host, i.cover AS image, i.data AS payload, i.provenance,
+              i.what, i.why, i.created_at,
+              (SELECT json_group_array(tag) FROM item_tags WHERE item_id = i.id) AS tags,
               c.title AS capture_title, c.final_url AS capture_url
-       FROM refs r LEFT JOIN captures c ON c.id = r.capture_id
-       WHERE r.user_id = ? AND r.id IN (${placeholders})`,
+       FROM items i LEFT JOIN captures c ON c.id = i.capture_id
+       WHERE i.user_id = ? AND i.id IN (${placeholders})`,
     )
     .all(userId, ...refIds) as RefRow[];
 
@@ -287,7 +287,7 @@ export function buildPack(pack: PackRow, refs: Ref[]): BuiltPack {
   const images: ZipEntry[] = [];
   refs.forEach((ref, index) => {
     if (!ref.image) return;
-    const absolute = join(config.mediaDir, ref.image);
+    const absolute = blobPath(ref.image);
     let data: Buffer;
     try {
       data = readFileSync(absolute);
@@ -295,7 +295,7 @@ export function buildPack(pack: PackRow, refs: Ref[]): BuiltPack {
       warnings.push(`Visuel introuvable pour « ${ref.title} » — la référence reste dans le pack sans image.`);
       return;
     }
-    const extension = ref.image.endsWith(".png") ? "png" : "jpg";
+    const extension = data[0] === 0x89 ? "png" : data.subarray(8, 12).toString("latin1") === "WEBP" ? "webp" : "jpg";
     const name = `images/${String(index + 1).padStart(2, "0")}-${slug(ref.title, ref.id.slice(0, 8))}.${extension}`;
     imageNames[ref.id] = name;
     images.push({ name, data });

@@ -10,7 +10,7 @@ function packView(row: PackRow, sources: string[], refCount: number): Record<str
     id: row.id,
     name: row.name,
     brief: row.brief,
-    refIds: JSON.parse(row.ref_ids) as unknown,
+    refIds: JSON.parse(row.item_ids) as unknown,
     sources,
     refCount,
     createdAt: row.created_at,
@@ -25,7 +25,7 @@ function loadPack(userId: string, packId: string): PackRow {
 
 function refIdsOf(row: PackRow): string[] {
   try {
-    const parsed: unknown = JSON.parse(row.ref_ids);
+    const parsed: unknown = JSON.parse(row.item_ids);
     return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
   } catch {
     return [];
@@ -52,17 +52,17 @@ export const packRoutes: Route[] = [
     path: "/api/packs",
     auth: true,
     async handler({ req, res, user }) {
-      const body = await readJson<{ name?: unknown; brief?: unknown; refIds?: unknown; collectionId?: unknown; allowSingleSource?: unknown }>(req);
+      const body = await readJson<{ name?: unknown; brief?: unknown; refIds?: unknown; boardId?: unknown; allowSingleSource?: unknown }>(req);
       const name = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 120) : "Pack sans nom";
 
       let refIds: string[] = Array.isArray(body.refIds)
         ? body.refIds.filter((id): id is string => typeof id === "string")
         : [];
-      if (refIds.length === 0 && typeof body.collectionId === "string") {
+      if (refIds.length === 0 && typeof body.boardId === "string") {
         refIds = (
           db()
-            .prepare("SELECT id FROM refs WHERE user_id = ? AND collection_id = ? ORDER BY created_at")
-            .all(user.id, body.collectionId) as { id: string }[]
+            .prepare("SELECT bi.item_id AS id FROM board_items bi JOIN boards b ON b.id = bi.board_id WHERE b.user_id = ? AND b.id = ? ORDER BY bi.position")
+            .all(user.id, body.boardId) as { id: string }[]
         ).map((row) => row.id);
       }
       if (refIds.length === 0) throw new HttpError(400, "empty_pack", "Sélectionnez au moins une référence.");
@@ -82,10 +82,10 @@ export const packRoutes: Route[] = [
       const id = randomUUID();
       const created_at = new Date().toISOString();
       db()
-        .prepare("INSERT INTO packs (id, user_id, name, brief, ref_ids, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .prepare("INSERT INTO packs (id, user_id, name, brief, item_ids, created_at) VALUES (?, ?, ?, ?, ?, ?)")
         .run(id, user.id, name, typeof body.brief === "string" ? body.brief.slice(0, 4000) : "", JSON.stringify(refs.map((ref) => ref.id)), created_at);
 
-      const row: PackRow = { id, user_id: user.id, name, brief: typeof body.brief === "string" ? body.brief.slice(0, 4000) : "", ref_ids: JSON.stringify(refs.map((r) => r.id)), created_at };
+      const row: PackRow = { id, user_id: user.id, name, brief: typeof body.brief === "string" ? body.brief.slice(0, 4000) : "", item_ids: JSON.stringify(refs.map((r) => r.id)), created_at };
       const built = buildPack(row, refs);
       json(res, 201, {
         pack: packView(row, built.sources, built.refCount),

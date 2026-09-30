@@ -53,7 +53,7 @@ export const assistantRoutes: Route[] = [
       if (!row) throw new HttpError(404, "not_found", "Pack introuvable.");
       let refIds: string[] = [];
       try {
-        const parsed: unknown = JSON.parse(row.ref_ids);
+        const parsed: unknown = JSON.parse(row.item_ids);
         if (Array.isArray(parsed)) refIds = parsed.filter((id): id is string => typeof id === "string");
       } catch {
         refIds = [];

@@ -32,6 +32,7 @@ import { discoveryRoutes } from "./routes/discovery.ts";
 import { packRoutes } from "./routes/packs.ts";
 import { assistantRoutes } from "./routes/assistant.ts";
 import { parseUserUrl } from "./capture/url-guard.ts";
+import { LibraryError } from "./library/index.ts";
 
 const routes: Route[] = [
   ...healthRoutes,
@@ -161,7 +162,7 @@ function start(): void {
         res.end();
         return;
       }
-      if (error instanceof HttpError) {
+      if (error instanceof HttpError || error instanceof LibraryError) {
         json(res, error.status, { error: error.code, message: error.message });
         return;
       }

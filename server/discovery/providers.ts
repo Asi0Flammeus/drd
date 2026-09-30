@@ -76,7 +76,7 @@ export function isNoiseHost(host: string): boolean {
  */
 export function tasteProfile(userId: string): TasteProfile {
   const rows = db()
-    .prepare("SELECT tags, what, why, source_host FROM refs WHERE user_id = ?")
+    .prepare("SELECT (SELECT json_group_array(tag) FROM item_tags WHERE item_id = items.id) AS tags, what, why, source_host FROM items WHERE user_id = ?")
     .all(userId) as { tags: string; what: string; why: string; source_host: string | null }[];
 
   const tags: Record<string, number> = {};

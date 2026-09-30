@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.ts";
+import { LIBRARY_SQL, migrateLibrary } from "./library/schema.ts";
 
 export type Db = DatabaseSync;
 
@@ -188,9 +189,16 @@ const MIGRATIONS: Migration[] = [
       UPDATE captures SET stage = 'done' WHERE status = 'ready';
     `,
   },
+  {
+    id: 3,
+    name: "items, boards, analyses and findings; references and collections migrated",
+    sql: LIBRARY_SQL,
+    up: migrateLibrary,
+  },
 ];
 
-export function migrate(): { applied: number[]; current: number } {
+/** `target` stops at a given migration: the seam the migration tests use to build an old database. */
+export function migrate(target = Infinity): { applied: number[]; current: number } {
   const connection = db();
   connection.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`);
@@ -199,7 +207,7 @@ export function migrate(): { applied: number[]; current: number } {
   );
   const applied: number[] = [];
   for (const migration of MIGRATIONS) {
-    if (done.has(migration.id)) continue;
+    if (done.has(migration.id) || migration.id > target) continue;
     connection.exec("BEGIN");
     try {
       connection.exec(migration.sql);

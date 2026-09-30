@@ -596,13 +596,17 @@ export function search(userId: string, query: SearchQuery): SearchResult {
     return true;
   });
 
+  // The "Sans raison" chip counts before its own filter; every other count, and
+  // the list, after it, like the host, board and class filters.
+  const unexplained = (row: ItemRow) => !row.why.trim();
+  const reasoned = query.noReason ? filtered.filter(unexplained) : filtered;
   const libraries: Record<Library | "tableaux", number> = { palettes: 0, typos: 0, composants: 0, ambiances: 0, tableaux: 0 };
-  for (const row of filtered) libraries[LIBRARY_OF[row.kind] ?? "ambiances"] += 1;
+  for (const row of reasoned) libraries[LIBRARY_OF[row.kind] ?? "ambiances"] += 1;
   libraries.tableaux = (connection.prepare("SELECT COUNT(*) AS n FROM boards WHERE user_id = ?").get(userId) as { n: number }).n;
 
-  let inLibrary = query.library ? filtered.filter((row) => (LIBRARY_OF[row.kind] ?? "ambiances") === query.library) : filtered;
-  const noReason = inLibrary.filter((row) => !row.why.trim()).length;
-  if (query.noReason) inLibrary = inLibrary.filter((row) => !row.why.trim());
+  const ofLibrary = (rows: ItemRow[]) => (query.library ? rows.filter((row) => (LIBRARY_OF[row.kind] ?? "ambiances") === query.library) : rows);
+  const noReason = ofLibrary(filtered).filter(unexplained).length;
+  let inLibrary = ofLibrary(reasoned);
 
   if (!target) {
     const sort = query.sort ?? "recent";

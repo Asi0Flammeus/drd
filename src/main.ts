@@ -127,6 +127,8 @@ function signOut(): void {
 }
 
 function render(): void {
+  // A sheet belongs to the screen that opened it: a route change closes it.
+  for (const dialog of document.querySelectorAll<HTMLDialogElement>("dialog[open]")) dialog.close();
   const r = route();
   const redirect = REDIRECTS[r.section];
   if (redirect) {

@@ -135,7 +135,8 @@ function tokensOfItem(item: ItemView): { path: string[]; token: Token }[] {
               fontSize: px(style.size),
               fontWeight: typeof style.weight === "number" ? style.weight : 400,
               lineHeight: typeof style.lineRatio === "number" ? style.lineRatio : 1.2,
-              letterSpacing: { value: typeof style.tracking === "number" ? style.tracking : 0, unit: "em" },
+              // DTCG 2025.10 dimensions are px or rem only: tracking is stored in em, set it at this size.
+              letterSpacing: px(typeof style.tracking === "number" ? Math.round(style.tracking * style.size * 100) / 100 : 0),
             },
           },
         });
@@ -331,7 +332,7 @@ export function toTailwind(items: ItemView[], title = "Thème DRD"): string {
     else if (namespace === "text" && token.type === "typography") {
       lines.push(`  --text-${tail(rest)}: ${token.value.fontSize.value}px;`);
       lines.push(`  --text-${tail(rest)}--line-height: ${token.value.lineHeight};`);
-      if (token.value.letterSpacing.value) lines.push(`  --text-${tail(rest)}--letter-spacing: ${token.value.letterSpacing.value}em;`);
+      if (token.value.letterSpacing.value) lines.push(`  --text-${tail(rest)}--letter-spacing: ${token.value.letterSpacing.value}${token.value.letterSpacing.unit};`);
       lines.push(`  --text-${tail(rest)}--font-weight: ${token.value.fontWeight};`);
     } else if (namespace === "radius" && token.type === "dimension") lines.push(`  --radius-${tail(rest)}: ${cssValue(token)};`);
     else if (namespace === "shadow" && token.type === "shadow") lines.push(`  --shadow-${tail(rest)}: ${cssValue(token)};`);

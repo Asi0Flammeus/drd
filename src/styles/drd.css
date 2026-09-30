@@ -697,12 +697,12 @@ p {
   font-weight: 600;
 }
 
+/* Role, OKLCH · hex and uses wrap instead of clipping: the hex is the value
+   people copy, and at 412 or in the 968 findings pane it was the part cut. */
 .picked-text > .val {
   display: block;
   color: var(--ink-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .picked-text > .val + .val {

@@ -45,15 +45,19 @@ export async function startCapture(url: string): Promise<string> {
   return created.id;
 }
 
+const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
+
 function captureRow(capture: CaptureSummary, onRetry: (id: string) => void): HTMLElement {
   const failed = capture.status === "failed";
+  // Ready with stage "analyse" and no analysis row yet is the gap between the
+  // capture and its analysis job: still live, not a version-1 capture.
+  const live = capture.status === "pending" || capture.status === "running" || capture.analysis?.status === "running" || capture.stage === "analyse";
   const meta = failed
     ? h("span", { class: "val error-text", text: capture.error ?? "Échec sans message." })
     : capture.status === "ready" && capture.counts
-      ? h("span", { class: "val", text: `${capture.host}\n${capture.counts.colors} couleurs · ${capture.counts.styles} styles · ${capture.counts.components} composants`, style: "white-space:pre-line" })
-      : h("span", { class: "val", text: `${capture.host} · ${relativeDate(capture.createdAt)}${capture.status === "ready" && !capture.analysis ? " · analyse v1" : ""}` });
+      ? h("span", { class: "val", text: `${capture.host}\n${plural(capture.counts.colors, "couleur", "couleurs")} · ${plural(capture.counts.styles, "style", "styles")} · ${plural(capture.counts.components, "composant", "composants")}`, style: "white-space:pre-line" })
+      : h("span", { class: "val", text: `${capture.host} · ${relativeDate(capture.createdAt)}${capture.status === "ready" && !capture.analysis && !live ? " · analyse v1" : ""}` });
   const body = h("div", { style: "min-width:0" }, [h("b", { text: capture.status === "ready" ? siteName(capture) : capture.requestedUrl }), meta]);
-  const live = capture.status === "pending" || capture.status === "running" || capture.analysis?.status === "running";
   if (live) body.append(stageRow(capture));
   const side = h("span", { class: "val muted", text: relativeDate(capture.createdAt) });
   const row = h("a", { class: `capture-row${failed ? " failed" : ""}`, href: `#/captures/${capture.id}/palette` }, [h("span", { class: "badge-site", "aria-hidden": "true", text: initials(capture) }), body, side]);
@@ -71,7 +75,9 @@ function captureRow(capture: CaptureSummary, onRetry: (id: string) => void): HTM
 export function buildCaptures(query: URLSearchParams): HTMLElement {
   const input = h("input", { type: "url", inputmode: "url", placeholder: "https://site.fr", "aria-label": "Adresse à capturer", autocomplete: "off", enterkeyhint: "go" });
   const submit = h("button", { type: "submit", class: "btn primary", text: "Capturer" });
-  const form = h("form", { class: "capture-form" }, [h("label", { class: "search" }, [icon("magnifier", 18), input]), submit]);
+  // The server repairs "site.fr" and "https:/site.fr"; the browser's url check
+  // would refuse the first with an English bubble, so it does not get a say.
+  const form = h("form", { class: "capture-form", novalidate: "" }, [h("label", { class: "search" }, [icon("magnifier", 18), input]), submit]);
   const message = h("p", { class: "error-text", role: "alert" });
   const list = h("div", { class: "capture-list", "aria-live": "polite" });
   const pistes = h("section", { class: "field", "aria-label": "Pistes" });

@@ -35,7 +35,12 @@ export function hueRing(initial: number | null, onPick: (value: { hue: number } 
   ring.addEventListener("keydown", (event) => {
     if (event.key === "ArrowRight" || event.key === "ArrowUp") hue = (hue + 10) % 360;
     else if (event.key === "ArrowLeft" || event.key === "ArrowDown") hue = (hue + 350) % 360;
-    else if (event.key === "Enter") onPick({ hue: Math.round(hue) });
+    else if (event.key === "Enter") {
+      // The same keypress would otherwise activate the chip that regains focus.
+      event.preventDefault();
+      onPick({ hue: Math.round(hue) });
+      return;
+    }
     else return;
     event.preventDefault();
     place();
@@ -46,7 +51,10 @@ export function hueRing(initial: number | null, onPick: (value: { hue: number } 
     if (input.value.trim()) onPick({ color: input.value.trim() });
   });
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && input.value.trim()) onPick({ color: input.value.trim() });
+    if (event.key === "Enter" && input.value.trim()) {
+      event.preventDefault();
+      onPick({ color: input.value.trim() });
+    }
   });
   place();
   return h("div", { class: "field" }, [ring, readout, input, apply]);

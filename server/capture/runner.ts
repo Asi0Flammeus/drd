@@ -280,6 +280,15 @@ export async function runCapture(captureId: string, requestedUrl: string): Promi
   mkdirSync(dir, { recursive: true });
 
   const state = { bytes: 0, requests: 0, blocked: 0 };
+  // Milliseconds per step, kept in the capture's meta: the deadline is shared
+  // by every step, so a slow page must say which one ate it.
+  const timings: Record<string, number> = {};
+  let lap = Date.now();
+  const mark = (step: string) => {
+    const now = Date.now();
+    timings[step] = now - lap;
+    lap = now;
+  };
   let browser: Browser | null = null;
   const overallTimeout = captureDeadline(config.capture.timeoutMs);
 
@@ -321,33 +330,42 @@ export async function runCapture(captureId: string, requestedUrl: string): Promi
       if (status >= 400) throw new Error(`Le site a répondu ${status}.`);
       await page.waitForNetworkIdle({ idleTime: 600, timeout: config.capture.settleTimeoutMs }).catch(() => {});
       await Promise.race([page.evaluate("document.fonts.ready.then(() => true)"), sleep(4000)]).catch(() => {});
+      mark("load");
 
       setStage(captureId, "scroll");
       await revealPass(page);
+      mark("scroll");
 
       setStage(captureId, "measure");
       await extract(page, "scrollTo", 0);
       await sleep(350);
       const dom = await extract<DomPass>(page, "dom");
+      mark("dom");
       const rendered = await renderedFonts(page, dom.textStyles.map((style) => style.id));
+      mark("fonts");
       await Promise.race([Promise.allSettled(network.reads), sleep(5000)]);
       const names = new Set(dom.customProperties);
       for (const sheet of network.stylesheets) for (const name of rootPropertyNames(sheet.text)) names.add(name);
       const customProperties = names.size
         ? await extract<CaptureArtifacts["customProperties"]>(page, "resolveVars", [...names])
         : [];
+      mark("network");
       const darkScheme = dom.darkScheme || network.stylesheets.some((sheet) => /prefers-color-scheme\s*:\s*dark/i.test(sheet.text));
 
       setStage(captureId, "pixels");
       const tiles = await tilePass(page, dir, dom);
+      mark("tiles");
       const pageHeight = Math.min(tiles.height, config.capture.maxPageHeight);
       await stitch(dir, tiles.shots, dom.page.width, pageHeight);
       await fallbackCrops(dir, dom, tiles, pageHeight);
+      mark("stitch");
       // Tiles were only ever the material for page.jpg and the crops.
       for (const shot of tiles.shots) rmSync(join(dir, shot.file), { force: true });
       await extract(page, "showFixed");
       const hover = await hoverPass(page, dir, dom);
+      mark("hover");
       const specimens = await specimenPass(page, dir, dom, rendered);
+      mark("specimens");
       const fonts = saveFontFiles(dir, network, guard.url.hostname);
 
       const { meta, page: pageSize, links, customProperties: _names, darkScheme: _dark, ...rest } = dom;
@@ -373,7 +391,8 @@ export async function runCapture(captureId: string, requestedUrl: string): Promi
     const result = await Promise.race([work, overallTimeout.promise]);
     if (result === "timeout") throw new Error(`Capture interrompue après ${Math.round(config.capture.timeoutMs / 1000)} s.`);
     const { artifacts, links, finalUrl } = result as Awaited<typeof work>;
-    persist(captureId, finalUrl, artifacts, links, state);
+    persist(captureId, finalUrl, artifacts, links, { ...state, timings });
+    console.log(`[drd] capture ${captureId} ${finalUrl.hostname} ${Object.entries(timings).map(([step, ms]) => `${step} ${(ms / 1000).toFixed(1)}s`).join(" · ")}`);
   } catch (error) {
     markFailed(captureId, error instanceof Error ? error.message : String(error));
     return;
@@ -691,7 +710,7 @@ function persist(
   url: URL,
   artifacts: CaptureArtifacts,
   links: DomPass["links"],
-  state: { bytes: number; requests: number; blocked: number },
+  state: { bytes: number; requests: number; blocked: number; timings: Record<string, number> },
 ): void {
   const connection = db();
   connection.exec("BEGIN");

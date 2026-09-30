@@ -32,7 +32,11 @@ export function closeDb(): void {
   handle = null;
 }
 
-type Migration = { id: number; name: string; sql: string };
+/**
+ * `up` runs after `sql`, inside the same transaction, for data transforms SQL
+ * alone cannot express (hashing files, converting colour payloads).
+ */
+type Migration = { id: number; name: string; sql: string; up?: (connection: Db) => void };
 
 const MIGRATIONS: Migration[] = [
   {
@@ -174,6 +178,16 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX packs_user ON packs(user_id, created_at DESC);
     `,
   },
+  {
+    id: 2,
+    name: "capture stages and attempts",
+    sql: `
+      ALTER TABLE captures ADD COLUMN stage TEXT;
+      ALTER TABLE captures ADD COLUMN retry_of TEXT REFERENCES captures(id) ON DELETE SET NULL;
+      ALTER TABLE captures ADD COLUMN artifacts INTEGER NOT NULL DEFAULT 1;
+      UPDATE captures SET stage = 'done' WHERE status = 'ready';
+    `,
+  },
 ];
 
 export function migrate(): { applied: number[]; current: number } {
@@ -189,6 +203,7 @@ export function migrate(): { applied: number[]; current: number } {
     connection.exec("BEGIN");
     try {
       connection.exec(migration.sql);
+      migration.up?.(connection);
       connection
         .prepare("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)")
         .run(migration.id, migration.name, new Date().toISOString());

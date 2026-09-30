@@ -20,6 +20,9 @@ type CaptureRow = {
   meta: string;
   created_at: string;
   finished_at: string | null;
+  stage: string | null;
+  retry_of: string | null;
+  artifacts: number;
 };
 
 export function captureSummary(row: CaptureRow): Record<string, unknown> {
@@ -37,6 +40,9 @@ export function captureSummary(row: CaptureRow): Record<string, unknown> {
     title: row.title,
     description: row.description,
     status: row.status,
+    stage: row.stage,
+    retryOf: row.retry_of,
+    artifacts: row.artifacts,
     error: row.error,
     width: row.width,
     height: row.height,
@@ -58,7 +64,7 @@ function assertQuota(userId: string): void {
   }
 }
 
-export async function startCapture(userId: string, rawUrl: unknown): Promise<{ id: string }> {
+export async function startCapture(userId: string, rawUrl: unknown, retryOf: string | null = null): Promise<{ id: string }> {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
     throw new HttpError(400, "bad_url", "Aucune URL fournie.");
   }
@@ -68,7 +74,7 @@ export async function startCapture(userId: string, rawUrl: unknown): Promise<{ i
   // capture row 400 ms later.
   const guard = await guardUrl(rawUrl);
   if (!guard.ok) throw new HttpError(400, guard.code, guard.message);
-  return requestCapture(userId, guard.url.toString());
+  return requestCapture(userId, guard.url.toString(), retryOf);
 }
 
 export const captureRoutes: Route[] = [
@@ -137,6 +143,19 @@ export const captureRoutes: Route[] = [
         .prepare("SELECT href, host, anchor, rel, in_footer AS inFooter, credit_like AS creditLike FROM capture_links WHERE capture_id = ? ORDER BY credit_like DESC, in_footer DESC LIMIT 120")
         .all(row.id);
       json(res, 200, { capture: captureSummary(row), elements, links });
+    },
+  },
+  {
+    // A new attempt beside the old one: the failed row and its reason stay.
+    method: "POST",
+    path: "/api/captures/:id/retry",
+    auth: true,
+    async handler({ res, user, params }) {
+      const row = db().prepare("SELECT id, requested_url FROM captures WHERE id = ? AND user_id = ?").get(params.id, user.id) as
+        | { id: string; requested_url: string }
+        | undefined;
+      if (!row) throw new HttpError(404, "not_found", "Capture introuvable.");
+      json(res, 202, await startCapture(user.id, row.requested_url, row.id));
     },
   },
   {

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay · dark sans fixture</title>
+<meta name="description" content="DRD local test page: dark background, one sans family, a lime accent, a strict 1.25 type scale.">
+<style>
+  :root { --bg: #0b0c0e; --panel: #15171a; --line: #2a2d33; --ink: #eef0f2; --muted: #9aa0a9; --lime: #d4f53c; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0b0c0e; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 16px/1.5 "DejaVu Sans", Verdana, sans-serif; }
+  h1 { font-size: 39px; line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 24px; font-weight: 700; }
+  h2 { font-size: 31px; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 16px; font-weight: 700; }
+  h3 { font-size: 20px; line-height: 1.3; margin: 0 0 8px; font-weight: 700; }
+  .lead { font-size: 25px; line-height: 1.4; color: var(--muted); max-width: 30ch; }
+  p { margin: 0 0 16px; color: var(--muted); }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 14px; color: var(--ink); background: var(--panel); padding: 2px 8px; border-radius: 4px; }
+  header { border-bottom: 1px solid var(--line); }
+  nav { max-width: 1120px; margin: 0 auto; padding: 16px 32px; display: flex; gap: 24px; align-items: center; }
+  nav strong { margin-right: auto; font-size: 20px; }
+  nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
+  .btn { display: inline-block; padding: 8px 16px; border-radius: 8px; background: var(--lime); color: #0b0c0e; font-weight: 700; text-decoration: none; font-size: 14px; border: 0; }
+  .btn.quiet { background: var(--panel); color: var(--ink); border: 1px solid var(--line); }
+  .hero { max-width: 1120px; margin: 0 auto; padding: 128px 32px 96px; min-height: 480px; }
+  .hero .row { display: flex; gap: 16px; margin-top: 32px; }
+  section { max-width: 1120px; margin: 0 auto; padding: 64px 32px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 24px; min-height: 200px; }
+  .band { background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  footer { max-width: 1120px; margin: 0 auto; padding: 48px 32px; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header><nav><strong>Relay</strong><a href="#product">Product</a><a href="#method">Method</a><a href="#pricing">Pricing</a><a class="btn" href="#start">Start building</a></nav></header>
+<main>
+  <div class="hero">
+    <h1>Ship the plan, not the meeting about it</h1>
+    <p class="lead">Relay turns the issues your team already writes into a plan everyone can read.</p>
+    <div class="row"><a class="btn" href="#start">Start building</a><a class="btn quiet" href="#method">Read the method</a></div>
+  </div>
+  <div class="band">
+    <section id="product">
+      <h2>Four things it does well</h2>
+      <p>Each one measured on teams of five to fifty people, over one quarter.</p>
+      <div class="grid">
+        <div class="tile"><h3>Triage</h3><p>New issues land in one queue with an owner by default.</p></div>
+        <div class="tile"><h3>Cycles</h3><p>Two weeks, a scope, and a single place to see it slip.</p></div>
+        <div class="tile"><h3>Reviews</h3><p>Every change links back to the issue that asked for it.</p></div>
+        <div class="tile"><h3>Reports</h3><p>Numbers the team trusts because they come from its own work.</p></div>
+      </div>
+    </section>
+  </div>
+  <section id="method">
+    <h2>One command to start</h2>
+    <p>Install the client, then run <code>relay init --team core</code> in any repository.</p>
+    <p>Everything else is configured from the issues themselves.</p>
+  </section>
+</main>
+<footer>Relay, a fixture page for DRD tests. No product exists.</footer>
+</body>
+</html>

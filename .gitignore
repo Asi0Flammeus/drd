@@ -7,3 +7,6 @@ dist/
 *.local
 *.log
 .DS_Store
+
+# Real-site proof screenshots stay private: the repository is public.
+/docs/proof-private/

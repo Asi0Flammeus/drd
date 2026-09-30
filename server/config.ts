@@ -47,14 +47,14 @@ export const config = {
 
   capture: {
     /** Hard ceiling on one capture, navigation plus extraction plus screenshots. */
-    timeoutMs: num("DRD_CAPTURE_TIMEOUT_MS", 60_000),
-    navigationTimeoutMs: num("DRD_CAPTURE_NAV_TIMEOUT_MS", 25_000),
+    timeoutMs: num("DRD_CAPTURE_TIMEOUT_MS", 150_000),
+    navigationTimeoutMs: num("DRD_CAPTURE_NAV_TIMEOUT_MS", 30_000),
+    /** After the document loads, how long the network gets to go quiet before the pipeline moves on anyway. */
+    settleTimeoutMs: num("DRD_CAPTURE_SETTLE_TIMEOUT_MS", 10_000),
     maxBytes: num("DRD_CAPTURE_MAX_BYTES", 30_000_000),
     maxRequests: num("DRD_CAPTURE_MAX_REQUESTS", 400),
     maxRedirects: num("DRD_CAPTURE_MAX_REDIRECTS", 5),
     maxPageHeight: num("DRD_CAPTURE_MAX_HEIGHT", 12_000),
-    maxElements: num("DRD_CAPTURE_MAX_ELEMENTS", 140),
-    maxCrops: num("DRD_CAPTURE_MAX_CROPS", 28),
     viewportWidth: num("DRD_CAPTURE_VIEWPORT_WIDTH", 1280),
     viewportHeight: num("DRD_CAPTURE_VIEWPORT_HEIGHT", 900),
     concurrency: num("DRD_CAPTURE_CONCURRENCY", 1),

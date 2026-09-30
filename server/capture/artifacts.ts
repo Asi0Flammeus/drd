@@ -53,7 +53,8 @@ export type TextRun = {
 
 export type TextStyleRep = { id: number; key: string; glyph: number; runs: number; rep: number; locations: Box[] };
 
-export type ComponentKind = "button" | "link-button" | "field" | "card" | "navigation" | "hero" | "footer" | "badge" | "form";
+/** `heading` is never detected by the capture: it names a title kept as a component before version 2. */
+export type ComponentKind = "button" | "link-button" | "field" | "card" | "navigation" | "hero" | "footer" | "badge" | "form" | "heading";
 
 export type ComponentTokens = {
   background: RgbKey | null;

@@ -1,12 +1,126 @@
 # DRD redesign: proof
 
-Status on 2026-09-30, after the S9 pass on **prod**. Verdict: **NO-SHIP**
-(blockers at the end). The build rows below the S9 section are kept as the
-record of the build run.
+Status on 2026-09-30, after the ship pass on **prod**. Verdict: **SHIP**.
+Open defects D13–D16 below are cosmetic and do not block. The S9 section
+and the build rows are kept as the record.
 
-## After S9: fixes 6f69b80 and 0888dd3 (30/09, 12:15–13:10 UTC), not deployed
+## Ship pass: deploy and re-shoot on prod (30/09, 13:10–13:50 UTC)
 
-Verdict unchanged: **NO-SHIP** until the deploy and the prod re-shoot below.
+**Deployed: 0b8f9fb** (e58d31e plus the Dockerfile fix below), container
+`drd` started 13:18:17Z, RestartCount 0. `/healthz` on 127.0.0.1:4354 and on
+https://dnd.alysis.cat: `{"status":"ok","schema":3,"database":"ok",
+"capture":{"browser":"ready","queued":0,"sandbox":"enabled"},"client":"built"}`.
+
+Incident during the deploy: the first image (e58d31e, 13:13:31Z) crash-looped
+with `EACCES, open '/app/server/analyse/components.ts'`. Five server sources
+(and three tests) had been written under a 077 umask, so they were 0600 and
+root-owned in the image; the server runs as uid 1000. Prod was down from
+13:13:31Z to 13:15:00Z, when an image built after `chmod a+r` on those files
+came up healthy. Fix 0b8f9fb: the runtime stage runs `chmod -R a+rX` on
+`dist`, `server`, `scripts`, then, as the non-root user, fails the build if
+`find … ! -readable` lists anything. Checked both ways with `palette.ts` set
+to 0600: without the chmod line the build stops at the check (exit 1); with
+it the build passes and the file is 644 in the image.
+
+Start-up log of the first healthy start (13:15:00Z): `[drd] legacy palettes
+re-derived from their capture (v1 payload kept in provenance):
+9f3d4875-…, 2a5c8294-…`. The restart at 13:18 logged no re-derivation
+(idempotent).
+
+### asi0's data
+
+Backups: `data/backups/drd-20260930-pre-deploy-e58d31e.sqlite` (before),
+`…-post-deploy-e58d31e.sqlite`, `…-pre-ship-proof-account-delete.sqlite`,
+`…-post-ship-proof.sqlite`. Fingerprint (same script and tables as S9):
+before the deploy `f80bc4a579891a5826afa61b`, identical to S9. After the
+deploy `a3fc2e6c42123d9f44af33ae`, and the diff, table by table:
+
+| | before | after |
+|---|---|---|
+| items (4 rows) | c55106f00bce7ec7 | cdeff901b376e82f |
+| item_colors | 30 rows | 13 rows |
+| items_fts (4 rows) | 53abd57853c9a6b0 | 7fd4f1dd46e2b1ca |
+| « Palette — linear.app » | row, data, 18 colours, fts | changed: 5 colours |
+| « Palette — mamielasagnes.fr » | row, data, 11 colours, fts | changed: 7 colours |
+| « Notre Carte », « Typographies — linear.app » | | identical |
+| his why / what / tags, every item | | identical |
+| users, captures 8, elements 333, links 206, analyses 8, findings 233, boards, board_items, signals, blobs 5, media files 518, blob files 5, sessions | | identical |
+
+The two palettes now read: linear.app Fond #08090a, Surface #0f1011, Texte
+#f7f8f8, Texte 2 #8a8f98, Bordure #ffffff (7 in `others`); mamielasagnes.fr
+Fond #f6eccc, Surface #ffffff, Texte #321108, Texte 2 #121212, Accent #d5360d,
+Accent 2 #9a905c, Bordure #0b4951 (1 in `others`). Each keeps its v1 payload
+(18 and 11 colours) in `provenance.rederived.previous`. After the whole proof
+run and the account deletion his fingerprint is still `a3fc2e6c…`.
+
+### How
+
+A fresh `maia-proof+drd@alysis.cat`, registered through the app's form with
+the instance invite code, used in headless Chromium at 968 × 875 and
+412 × 915 (touch, DPR 1). Its captures: www.nematis.com, linear.app,
+maisoncyrah.fr, mamielasagnes.fr, typewolf.com, fontshare.com,
+jeremiahshoaf.com, sharptype.co (the site answered 429), machinepro.club.
+For I-26 two of asi0's v1 captures (maisoncyrah 3d95c4a1, linear 0af0c6e8)
+were copied to the proof account under new ids with their elements, links
+and media, and no analysis. The originals were only read. Shots:
+`docs/proof-private/ship/` (gitignored).
+
+At the end the account was deleted as in S9: `DELETE FROM items_fts` for its
+items, then `DELETE FROM users` with `foreign_keys=ON` (cascade: 11 captures,
+12 items, 1 board, 2 packs, 1 session, 7 candidates, 17 signals), its 11
+media folders removed, 52 unreferenced blobs collected with the server's
+`collectBlobs`. No orphans in any table, `integrity_check` ok, one user left.
+
+### nematis on prod
+
+Captured through the UI at 968: capture 52.2 s (13:19:17.673Z →
+13:20:09.885Z), analysis 1.3 s, ready at 53.8 s. Server log: `load 2.0s ·
+scroll 5.2s · dom 2.3s · fonts 5.0s · network 0.2s · tiles 21.2s · stitch
+1.3s · hover 12.5s · specimens 2.5s`. Memory, the prod `drd` cgroup sampled
+every 100 ms over 200 s from the capture's start (docker stats' figure:
+memory.current minus inactive_file): **peak 1333 MiB** at 34.8 s, limit
+2048 MiB, `oom_kill` 0 before and 0 after. Since the restart the container's
+`memory.events` still reads `oom_kill 0`.
+
+**Decision (M1), not a failure:** the 1 GB target is dropped. A peak of about
+1.3–1.5 GB with no OOM under the 2 GB limit is accepted, because getting
+under 1 GB would mean not rendering the WebGL and video that DRD exists to
+capture.
+
+### Rows re-shot
+
+| # | 968 | 412 | Observed on prod |
+|---|---|---|---|
+| I-01 (D1) | ✔ | | nematis and linear: the row goes Chargement → Défilement → (Mesure) → Pixels → Analyse with its stages and no « analyse v1 », then the counts. linear 44 s. |
+| I-05 | ✔ | | Tab bar `position: sticky`: at 77 px before the scroll, 0 px after it. |
+| I-06 (D2) | ✔ | ✔ | Texte 2 selected (`aria-pressed`), row shows `oklch(0.649 0.015 262) · #8a8f98` and uses; no ellipsis, 0 clipped elements. 412: see D13. |
+| I-12 (D4) | ✔ | ✔ | 968 long-press on Gardé opens the picker, « Créer et ranger » made « Preuve ship »; 412 chevron, existing board. Tap on Gardé in the sheet: fiche opens, 0 open dialogs, fiche lists the board. |
+| I-14 (D5) | ✔ | ✔ | « Bouton « Product » » CSS has `.bouton:hover { background: #1f1f1f; color: #f7f8f8; }`; Copier le CSS read back from the clipboard with it. |
+| I-16 (C2) | ✔ | | Family cards show one crop per role: nematis Work Sans Display 50/60, Titre 45/54, Corps 24/29; linear Inter Titre 40/44 and Corps 15/24. See D14, D15. |
+| I-18 (D7) | ✔ | ✔ | `#186063` + Enter: sheet closes and stays closed, filter chip `#186063`, Maison Cyrah Δ 0. |
+| I-19 (D11) | ✔ | ✔ | Sans raison: tabs go Palettes 4 → 2, Typos 5 → 4, and back when released. |
+| I-22 (D8) | ✔ | ✔ | « Preuve ship » mosaic: component crop, two palettes as colour stripes, mood crop. |
+| I-24 (D12) | ✔ | ✔ | Typography pack of 5 items from 4 hosts at each size, ZIP downloaded; both `tokens.json` VALID against the DTCG 2025.10 schema; every `letterSpacing` is `{"value":0,"unit":"px"}` (these pages set no tracking; non-zero em→px is covered by `test/tokens.test.ts`). |
+| I-26 | ✔ | ✔ | v1 copy: banner « Capturée avec DRD v1 », Réanalyser, then « analyse v2 partielle » with the partial banner. linear v1 → Fond #08090a, Surface #0f1011, Texte #f7f8f8, Texte 2 #8a8f98, Bordure #ffffff. |
+| I-28 (D10) | ✔ | ✔ | Offline on Analyse: one « Hors ligne » banner, analysis from cache. |
+| I-29 | ✔ | ✔ | 968: Écarter p-com.studio (gone after reload), Capturer jeremiahshoaf.com → ready. 412: Écarter threadless.com (gone after reload), Capturer sharptype.co (site answered 429, shown with Réessayer), Capturer machinepro.club → ready. The extra leads at 412 came from a why naming two footer-link hosts, which is how the taste profile scores leads. |
+| D6 | ✔ | | `maisoncyrah.fr` without scheme: no browser bubble (`novalidate`), server answered « Déjà capturé le 30/09 ». |
+
+**968: 29 ✔, 0 ◐, 0 ✖. 412: 29 ✔, 0 ◐, 0 ✖.** Rows not listed here keep
+their S9 result (✔ at both sizes).
+
+### Open, not blocking
+
+| | Defect |
+|---|---|
+| D13 | 412: the picked colour row's text column is ~70 px wide beside the confidence dot and two buttons, so `oklch(0.649 0.015 262)` breaks mid-number over three lines. Everything is visible. |
+| D14 | nematis Titre specimen « Référencement naturel » (45 px) is cut at « Référenc »: the crop follows the element box, the text overflows it. |
+| D15 | linear has no Display specimen: its 64 px h1 is the one style of 14 without a crop, so only Titre and Corps show. |
+| D16 | Library palette rows: narrow bands clip their hex label (`#12121…`, `#d5360…`). |
+
+## After S9: fixes 6f69b80 and 0888dd3 (30/09, 12:15–13:10 UTC), deployed in the ship pass
+
+Verdict at the time: NO-SHIP until the deploy and the prod re-shoot above.
 
 P1/M1 were measured in a throwaway container with prod's limits (2 GB,
 same seccomp, tmpfs), the working tree mounted, cgroup sampled every
@@ -39,10 +153,7 @@ Every v2 capture's palette is unchanged except nematis, which loses #ff0000.
 
 Tests: 24 pass, typecheck and build clean.
 
-Still to do: back up and fingerprint asi0's data, deploy once, then on prod
-through a throwaway account: every row these fixes touch (I-01, I-06, I-12,
-I-14, I-16, I-18, I-19, I-22, I-24, I-26 partial path on a copy of a v1
-capture, I-28, I-29 at both sizes), and the fingerprint diff.
+Done in the ship pass above.
 
 ## S9: every interaction on prod (30/09, 11:20–12:10 UTC)
 
@@ -105,23 +216,23 @@ proven. **968: 22 ✔, 7 ◐, 0 ✖. 412: 24 ✔, 5 ◐, 0 ✖.**
 
 ### Defects found
 
-| | Defect | State |
+| | Defect | State (ship pass, 0b8f9fb on prod) |
 |---|---|---|
-| D1 | Capture row reads « analyse v1 » without stages in the gap before the analysis starts | fixed in source, not deployed |
-| D2 | Picked colour row clips hex/OKLCH/uses | fixed in source (wraps), not deployed |
-| D3 | « 1 styles »: counts without singular | fixed in source, not deployed |
-| D4 | A sheet stays open over the next screen | fixed in source (route change closes open dialogs), not deployed |
-| D5 | Component CSS snippet has no `:hover` rule | open |
-| D6 | `type=url` field refuses `maisoncyrah.fr` with an English browser bubble | fixed in source (`novalidate`, server parses), not deployed |
-| D7 | Enter in the hue sheet's hex field reopens the sheet | fixed in source (`preventDefault`), not deployed |
-| D8 | Board mosaic empty for palette items | open |
-| D10 | Two offline banners on Analyse | open |
-| D11 | Library tab counts ignore « Sans raison » | fixed in source, not deployed |
-| D12 | Typography `letterSpacing` exported in `em`: invalid DTCG 2025.10 | fixed + `test/tokens.test.ts` (fails without the fix, passes with it), not deployed |
-| C1 | Legacy « Palette — linear.app » (asi0's, v1): 18 raw colours incl. `#00ff05`, `#f34e52`, `#f79ce0`, theme wrongly `light`. Same class in v2: nematis Accent `#ff0000` from 4 elements, 0.07 % of text (fallback rule « chroma × usage » with no floor) | open, analysed (below) |
-| C2 | Legacy « Typographies — linear.app »: samples are the first 4 elements by y (nav pills « Resources », « Linear », « Pulse ») | open, analysed (below) |
-| P1 | nematis capture 127.6 s on prod (deadline 150 s) | profiled, open |
-| M1 | Chrome renderer OOM-killed in the drd cgroup | cause found, open |
+| D1 | Capture row reads « analyse v1 » without stages in the gap before the analysis starts | fixed, observed on prod |
+| D2 | Picked colour row clips hex/OKLCH/uses | fixed (wraps), observed on prod; D13 is what remains at 412 |
+| D3 | « 1 styles »: counts without singular | fixed in source and deployed, not re-observed: no capture on prod had a count of 1 |
+| D4 | A sheet stays open over the next screen | fixed, observed on prod |
+| D5 | Component CSS snippet has no `:hover` rule | fixed, observed on prod |
+| D6 | `type=url` field refuses `maisoncyrah.fr` with an English browser bubble | fixed, observed on prod |
+| D7 | Enter in the hue sheet's hex field reopens the sheet | fixed, observed on prod |
+| D8 | Board mosaic empty for palette items | fixed, observed on prod |
+| D10 | Two offline banners on Analyse | fixed, observed on prod |
+| D11 | Library tab counts ignore « Sans raison » | fixed, observed on prod |
+| D12 | Typography `letterSpacing` exported in `em`: invalid DTCG 2025.10 | fixed + `test/tokens.test.ts`; prod packs VALID |
+| C1 | Legacy « Palette — linear.app » (asi0's, v1): 18 raw colours incl. `#00ff05`, `#f34e52`, `#f79ce0`, theme wrongly `light`. Same class in v2: nematis Accent `#ff0000` from 4 elements, 0.07 % of text (fallback rule « chroma × usage » with no floor) | fixed; asi0's two palettes re-derived on prod (his OK), nematis on prod has no accent |
+| C2 | Legacy « Typographies — linear.app »: samples are the first 4 elements by y (nav pills « Resources », « Linear », « Pulse ») | fixed (role specimens), observed on prod; D14, D15 open |
+| P1 | nematis capture 127.6 s on prod (deadline 150 s) | fixed: 52.2 s on prod |
+| M1 | Chrome renderer OOM-killed in the drd cgroup | fixed: peak 1333 MiB, oom_kill 0; the 1 GB target dropped by decision |
 
 C1, analysed on the stored captures with the current analysis (read-only
 probe): two rule changes give the curated result the spec asks for. (a) For
@@ -169,15 +280,14 @@ it is not used as evidence. Tailwind v4.3.3 compiled both packs' `theme.css`
 and generated `bg-linear-background`, `rounded-maison-cyrah-link-button`,
 `text-nematis-accent`.
 
-### Blockers before SHIP
+### Blockers before SHIP (all cleared in the ship pass)
 
-1. Deploy the committed fixes (D1–D4, D6, D7, D11, D12) and re-shoot I-06,
-   I-12, I-18, I-19, I-24 on prod.
-2. C1 and C2 (curated palettes, role specimens), with asi0's OK for the
-   repair of his two legacy items.
-3. P1/M1: bound the pixel pass memory and time, re-measure nematis on prod.
+1. Deploy the committed fixes and re-shoot I-06, I-12, I-18, I-19, I-24 on
+   prod: done.
+2. C1 and C2, with asi0's OK for the repair of his two legacy items: done.
+3. P1/M1: done, 52.2 s and 1333 MiB on prod; 1 GB dropped by decision.
 4. D5, D8, D10; I-26 partial path on a v1 capture; I-29 both actions at
-   each size.
+   each size: done.
 
 ## Build run record (before S9)
 
@@ -198,6 +308,8 @@ because the repository is public.
 |---|---|---|---|
 | ~12:15 | 966d869 | 2 | S0 capture pipeline, with old UI |
 | ~15:40 | 060786f | 3 | S1 to S8 together, because S1 removes the routes the old UI calls |
+| 15:13 | e58d31e | 3 | crash-looped (EACCES, 0600 sources); replaced at 15:15 by the same tree with the modes fixed, healthy, legacy palettes re-derived |
+| 15:18 | 0b8f9fb | 3 | the Dockerfile fix; running since, RestartCount 0 |
 
 After the second deploy, /healthz returned `schema 3, browser ready,
 sandbox enabled`. The start-up log shows `applied 3` and that legacy items

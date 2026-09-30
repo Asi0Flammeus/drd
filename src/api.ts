@@ -15,11 +15,14 @@ export class ApiFailure extends Error {
   code: string;
   status: number;
   offline: boolean;
-  constructor(message: string, code: string, status: number, offline = false) {
+  /** The whole error body, for answers that carry more than a message (409 "already captured"). */
+  payload: Record<string, unknown>;
+  constructor(message: string, code: string, status: number, offline = false, payload: Record<string, unknown> = {}) {
     super(message);
     this.code = code;
     this.status = status;
     this.offline = offline;
+    this.payload = payload;
   }
 }
 
@@ -105,7 +108,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       if ("error" in payload && typeof payload.error === "string") code = payload.error;
       if ("message" in payload && typeof payload.message === "string") message = payload.message;
     }
-    throw new ApiFailure(message, code, response.status);
+    throw new ApiFailure(message, code, response.status, false, payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {});
   }
   return payload as T;
 }
@@ -147,34 +150,7 @@ export function del<T>(path: string): Promise<T> {
 
 export type User = { id: string; email: string };
 
-export type Collection = {
-  id: string;
-  parentId: string | null;
-  name: string;
-  kind: string;
-  position: number;
-  count: number;
-  createdAt: string;
-};
-
-export type Ref = {
-  id: string;
-  collectionId: string | null;
-  type: "site" | "component" | "font" | "palette" | "image";
-  title: string;
-  captureId: string | null;
-  elementId: string | null;
-  sourceUrl: string | null;
-  sourceHost: string | null;
-  image: string | null;
-  payload: Record<string, unknown>;
-  provenance: Record<string, unknown>;
-  what: string;
-  why: string;
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
-};
+export type Box = { x: number; y: number; width: number; height: number };
 
 export type CaptureSummary = {
   id: string;
@@ -182,44 +158,190 @@ export type CaptureSummary = {
   finalUrl: string | null;
   host: string;
   title: string | null;
+  siteName: string;
   description: string | null;
   status: "pending" | "running" | "ready" | "failed";
+  stage: "load" | "scroll" | "measure" | "pixels" | "analyse" | "done" | null;
+  retryOf: string | null;
+  artifacts: number;
   error: string | null;
   width: number | null;
   height: number | null;
   screenshot: string | null;
-  meta: {
-    meta?: Record<string, string>;
-    fonts?: { family: string; count: number; sizes: number[]; weights: string[]; sample: string }[];
-    colors?: { hex: string; count: number; role: string }[];
-    page?: { width: number; height: number };
-    budget?: { bytes: number; requests: number; blocked: number };
-  };
+  analysis: { id: string; version: number; status: "running" | "done" | "failed"; partial: boolean; error: string | null; finishedAt: string | null } | null;
+  counts: { colors: number; styles: number; components: number } | null;
   createdAt: string;
   finishedAt: string | null;
 };
 
-export type CaptureElement = {
-  id: string;
-  ordinal: number;
-  tag: string;
-  selector: string;
-  label: string;
-  guess: string;
-  box: { x: number; y: number; width: number; height: number };
-  text: string | null;
-  styles: Record<string, string>;
-  crop: string | null;
+export type Confidence = "sure" | "probable" | "check";
+export type Evidence = { origin: string; note: string };
+
+export type Oklch = { l: number; c: number; h: number };
+
+export type PaletteColor = {
+  role: string;
+  key: string | null;
+  value: Oklch;
+  hex: string;
+  share: number;
+  textShare: number;
+  usedOn: string[];
+  declaredAs?: string;
+  origins: string[];
+  confidence: Confidence;
+  evidence: Evidence[];
+  locations: Box[];
 };
 
-export type CaptureLink = {
-  href: string;
-  host: string;
-  anchor: string | null;
-  rel: string | null;
-  inFooter: number;
-  creditLike: number;
+export type ContrastPair = { fg: string; bg: string; label: string; wcag: number; grade: "AAA" | "AA" | "AA large" | "fail"; where: string; share: number };
+
+export type PaletteData = { colors: PaletteColor[]; pairs: ContrastPair[]; others: { value: Oklch; hex: string; share: number; origins: string[] }[]; theme: "light" | "dark"; legacy?: boolean };
+
+export type TextStyle = {
+  family: string;
+  declared: string;
+  size: number;
+  lineHeight: number;
+  lineRatio: number;
+  tracking: number;
+  weight: number;
+  transform: string;
+  italic: boolean;
+  role: string;
+  share: number;
+  sample: string;
+  crop: string | null;
+  locations: Box[];
+  runs: number;
+  origin: string;
 };
+
+export type TypeScaleData = { body: number; ratio: number | null; ratioName: string | null; error: number | null; verdict: string; steps: { size: number; n: number | null; lineHeight: number; role: string }[]; styles: TextStyle[]; families: string[] };
+
+export type TypeFamilyData = {
+  family: string;
+  declared: string[];
+  generic: string;
+  display: boolean;
+  weights: number[];
+  italic: boolean;
+  variation: string[];
+  source: { label: string; host: string | null; licence: string };
+  mismatch: { declared: string; rendered: string } | null;
+  specimens: { weight: number; italic: boolean; file: string }[];
+  fontFiles: { file: string; weight: string; style: string }[];
+  share: number;
+  roles: string[];
+  bodySize: number | null;
+};
+
+export type TypePairData = {
+  display: { family: string; generic: string; size: number; weight: number; crop: string | null };
+  text: { family: string; generic: string; size: number; weight: number; crop: string | null };
+};
+
+export type ColorRef = { hex: string; role: string | null };
+
+export type ComponentData = {
+  kind: string;
+  kindLabel: string;
+  label: string;
+  count: number;
+  tokens: {
+    background: ColorRef | null;
+    foreground: ColorRef | null;
+    border: { width: number; style: string; color: ColorRef | null } | null;
+    radius: number[];
+    padding: number[];
+    height: number;
+    width: number;
+    gap: number;
+    font: { family: string; size: number; weight: number; lineHeight: number | null; letterSpacing: number; transform: string };
+    shadow: string | null;
+    transition: { duration: string; easing: string; property: string } | null;
+  };
+  hover: { changes: { property: string; from: string; to: string }[]; crop: string | null } | null;
+  css: string;
+  dhash: string | null;
+  crop?: string;
+};
+
+export type SpacingData = { base: number; steps: number[]; explained: number; contentWidth: number | null; columns: number | null; values: { value: number; count: number }[] };
+export type RadiusData = { system: string; rule: string; byKind: { kind: string; kindLabel: string; values: number[] }[] };
+export type ElevationData = { shadows: { value: string; blur: number; count: number }[] };
+
+export type MoodData = {
+  images: { box: Box; palette: string[]; meanL: number; meanC: number; meanB: number; stdL: number; distinct: number; nature: string; crop: string | null }[];
+  palette: { hex: string; value: Oklch; share: number }[];
+  descriptors: { name: string; word: string; value: number; unit: string }[];
+  density: { share: number; word: string };
+  nature: string | null;
+};
+
+export type PageData = { url: string; title: string; description: string; lang: string; siteName: string; themeColor: string; favicon: string; generator: string; width: number; height: number; darkScheme: boolean; capturedAt: string; partial: boolean };
+
+export type Finding = {
+  id: string;
+  kind: "palette" | "color" | "type" | "component" | "scale" | "mood" | "page";
+  subkind: string | null;
+  title: string;
+  confidence: Confidence;
+  evidence: Evidence[];
+  data: unknown;
+  media: string[];
+  locations: Box[];
+  signature: string | null;
+};
+
+export type CaptureDetail = {
+  capture: CaptureSummary;
+  findings: Finding[];
+  kept: Record<string, string>;
+  attempts: { id: string; status: string; error: string | null; created_at: string }[];
+  analysisVersion: number;
+};
+
+export type Library = "palettes" | "typos" | "composants" | "ambiances";
+
+export type Item = {
+  id: string;
+  kind: Finding["kind"];
+  subkind: string | null;
+  library: Library;
+  title: string;
+  why: string;
+  what: string;
+  tags: string[];
+  data: unknown;
+  media: string[];
+  cover: string | null;
+  captureId: string | null;
+  findingId: string | null;
+  sourceUrl: string | null;
+  sourceHost: string | null;
+  confidence: Confidence | null;
+  signature: string | null;
+  provenance: Record<string, unknown>;
+  boards: { id: string; name: string }[];
+  createdAt: string;
+  updatedAt: string;
+  match?: { hex: string; distance: number };
+  neighbours?: Neighbour[];
+};
+
+export type Neighbour = { id: string; title: string; kind: string; library: Library };
+
+export type KeepResult = { item: Item; already: boolean; neighbours: Neighbour[] };
+
+export type SearchResult = {
+  items: Item[];
+  counts: { libraries: Record<Library | "tableaux", number>; noReason: number; total: number };
+  facets: { hosts: string[]; tags: string[]; componentKinds: string[] };
+  mode: "all" | "any" | "none";
+};
+
+export type Board = { id: string; name: string; description: string; count: number; covers: string[]; kinds: string[]; usedAt: string | null; createdAt: string };
 
 export type Candidate = {
   id: string;
@@ -233,12 +355,27 @@ export type Candidate = {
   createdAt: string;
 };
 
-export type Pack = {
+export type ExportPack = {
   id: string;
   name: string;
   brief: string;
-  refIds: string[];
+  itemIds: string[];
+  formats: string[];
+  source: string;
   sources: string[];
-  refCount: number;
+  itemCount: number;
   createdAt: string;
 };
+
+export type ExportPreview = { warnings: { level: "refuse" | "warn"; message: string }[]; files: { name: string; bytes: number }[]; sources: string[]; itemCount: number };
+
+/**
+ * A media reference to a URL: `blob:<hash>` is an item's own copy, a bare
+ * file name belongs to the capture it came from.
+ */
+export function mediaUrl(ref: string | null | undefined, captureId?: string | null): string | null {
+  if (!ref) return null;
+  if (ref.startsWith("blob:")) return `/blobs/${ref.slice(5)}`;
+  if (/^[0-9a-f]{64}$/.test(ref)) return `/blobs/${ref}`;
+  return captureId ? `/media/${captureId}/${ref}` : null;
+}

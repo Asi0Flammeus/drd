@@ -1,321 +1,190 @@
 /**
- * App shell.
+ * App shell: session, routing, navigation, toast, offline state.
  *
  * Hash routing on purpose: the origin's path space belongs to the capture
- * splat — `drd.example/https://site.fr` has to mean "capture this" — so the
- * client lives entirely under `/app#/…` and the service worker has exactly one
- * navigation target to cache.
+ * splat (`dnd.alysis.cat/https://site.fr` means "capture this"), so the client
+ * lives under `/app#/…` and the service worker has one navigation target.
  *
- * The rail carries five sections and collapses in every layout mode, which is
- * what makes the same build usable on a phone, on a Fold's inner screen, and
- * on a desktop.
+ * Routes (§6): #/captures, #/captures/:id/:tab, #/bibliotheque/:library,
+ * #/items/:id, #/tableaux/:id, #/atelier, #/exports, #/exports/:id. The old
+ * routes redirect once to their new homes.
  */
 
 import "./styles/fonts.css";
-import "./styles/app.css";
 import "./styles/preview.css";
 import "./styles/drd.css";
 
-import { ApiFailure, clearCache, get, post, reachability } from "./api";
+import { ApiFailure, clearCache, get, reachability } from "./api";
 import type { User } from "./api";
-import { loadWorkspace, saveWorkspace } from "./state";
-import type { DimensionId, Workspace } from "./state";
-import { h, icon, ICONS } from "./ui/controls";
-import { loadCollections, store } from "./store";
-import { buildAuthPanel } from "./views/auth";
-import { buildCapturePanel, startCapture } from "./views/capture";
-import { buildCollectionsPanel } from "./views/collections";
-import { buildDiscoveryPanel } from "./views/discovery";
-import { buildInboxPanel } from "./views/inbox";
-import { buildPackPanel, buildPacksPanel } from "./views/packs";
-import { buildColorPanel } from "./views/color";
-import { buildComponentPanel } from "./views/components";
-import { buildTypePanel } from "./views/type";
-import type { Panel, ViewContext } from "./views/view";
+import { app } from "./app";
+import { h } from "./ui/controls";
+import { icon } from "./ui/icons";
+import { buildNav } from "./ui/nav";
+import { buildAnalyse } from "./views/analyse";
+import { buildAtelier } from "./views/atelier";
+import { buildAuth } from "./views/auth";
+import { buildBoard, buildItemPage, buildLibrary } from "./views/bibliotheque";
+import { buildCaptures, startCapture } from "./views/captures";
+import { buildExport, buildExports } from "./views/exports";
 
 /**
- * The signed-in identity, mirrored so an offline start knows whose cache it
- * is showing. It holds no credential and no token — the session cookie is
- * HttpOnly and never visible here — so the worst a stale entry can do is
- * render a cached view that the first successful request corrects.
+ * The signed-in identity, mirrored so an offline start knows whose cache it is
+ * showing. No credential: the session cookie is HttpOnly and never visible here.
  */
 const SESSION_MIRROR = "drd.session.v1";
 
-function rememberSession(user: User): void {
+const remember = (user: User | null) => {
   try {
-    localStorage.setItem(SESSION_MIRROR, JSON.stringify(user));
+    if (user) localStorage.setItem(SESSION_MIRROR, JSON.stringify(user));
+    else localStorage.removeItem(SESSION_MIRROR);
   } catch {
-    /* Private mode: the app still works online. */
+    /* private mode: online still works */
   }
-}
-
-function rememberedSession(): User | null {
-  try {
-    const raw = localStorage.getItem(SESSION_MIRROR);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && "id" in parsed && "email" in parsed) {
-      const { id, email } = parsed;
-      if (typeof id === "string" && typeof email === "string") return { id, email };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function forgetSession(): void {
-  try {
-    localStorage.removeItem(SESSION_MIRROR);
-  } catch {
-    /* nothing to do */
-  }
-}
-
-const SECTIONS: { route: string; label: string; blurb: string }[] = [
-  { route: "#/inbox", label: "Capturer", blurb: "Une URL, une page mesurée." },
-  { route: "#/collections", label: "Collections", blurb: "Ce que vous gardez, et pourquoi." },
-  { route: "#/playground", label: "Playground", blurb: "Type, couleur, composants." },
-  { route: "#/discovery", label: "Découverte", blurb: "Des pistes tirées de vos captures." },
-  { route: "#/packs", label: "Packs", blurb: "Le brief à donner à un agent." },
-];
-
-const DIMENSIONS: { id: DimensionId; label: string }[] = [
-  { id: "type", label: "Type" },
-  { id: "color", label: "Couleur" },
-  { id: "components", label: "Composants" },
-];
-
-const ws: Workspace = loadWorkspace();
-const root = document.getElementById("app");
-if (!root) throw new Error("#app missing");
-
-const rail = h("nav", { class: "rail", "aria-label": "Sections" });
-const work = h("main", { class: "workarea", id: "workarea" });
-const layout = h("div", { class: "layout" }, [rail, work]);
-const toastBox = h("div", { class: "toast", role: "status", "aria-live": "polite" });
-const banner = h("div", { class: "offline-banner", role: "status" });
-
-let panel: Panel | null = null;
-let toastTimer = 0;
-let session: User | null = null;
-
-function toast(message: string): void {
-  toastBox.textContent = message;
-  toastBox.classList.add("is-live");
-  window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toastBox.classList.remove("is-live"), 3000);
-}
-
-function go(route: string): void {
-  if (location.hash === route) render();
-  else location.hash = route;
-}
-
-const ctx: ViewContext = {
-  ws,
-  commit() {
-    saveWorkspace(ws);
-    panel?.sync();
-  },
-  rebuild() {
-    saveWorkspace(ws);
-    render();
-  },
-  go,
-  toast,
 };
 
-type Route = { name: string; param: string | null; query: URLSearchParams };
-
-function currentRoute(): Route {
-  const raw = location.hash.replace(/^#/, "") || "/inbox";
-  const [path, queryString] = raw.split("?");
-  const parts = path.split("/").filter(Boolean);
-  return {
-    name: parts[0] ?? "inbox",
-    param: parts[1] ?? null,
-    query: new URLSearchParams(queryString ?? ""),
-  };
-}
-
-function buildRail(route: Route): void {
-  rail.replaceChildren();
-  for (const section of SECTIONS) {
-    const active = `#/${route.name}` === section.route;
-    const button = h("button", {
-      type: "button",
-      class: `rail-item${active ? " is-current" : ""}`,
-      "aria-current": active ? "true" : "false",
-    }, [
-      h("span", { class: "rail-label", text: section.label }),
-      h("span", { class: "rail-blurb", text: section.blurb }),
-    ]);
-    button.addEventListener("click", () => go(section.route));
-    rail.append(button);
-
-    if (active && section.route === "#/playground") {
-      const sub = h("div", { class: "rail-sub" });
-      for (const dimension of DIMENSIONS) {
-        const on = ws.dimension === dimension.id;
-        const item = h("button", {
-          type: "button",
-          class: `rail-subitem${on ? " is-current" : ""}`,
-          "aria-current": on ? "true" : "false",
-          text: dimension.label,
-        });
-        item.addEventListener("click", () => {
-          ws.dimension = dimension.id;
-          ctx.rebuild();
-        });
-        sub.append(item);
-      }
-      rail.append(sub);
-    }
+const remembered = (): User | null => {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(SESSION_MIRROR) ?? "null");
+    return parsed && typeof parsed === "object" && "id" in parsed && "email" in parsed ? (parsed as User) : null;
+  } catch {
+    return null;
   }
+};
 
-  const account = h("button", { type: "button", class: "rail-foot-button" }, [
-    h("span", { class: "rail-label", text: session?.email ?? "Compte" }),
-    h("span", { class: "rail-blurb", text: "Se déconnecter" }),
-  ]);
-  account.addEventListener("click", async () => {
-    await post("/api/auth/logout");
-    clearCache();
-    forgetSession();
-    session = null;
-    store.collections = [];
-    go("#/login");
-  });
-  rail.append(account);
+const REDIRECTS: Record<string, string> = {
+  inbox: "#/captures",
+  discovery: "#/captures",
+  collections: "#/bibliotheque/tableaux",
+  packs: "#/exports",
+  playground: "#/atelier",
+};
+
+type Route = { section: string; parts: string[]; query: URLSearchParams };
+
+function route(): Route {
+  const raw = location.hash.replace(/^#\/?/, "") || "captures";
+  const [path, search] = raw.split("?");
+  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  return { section: parts[0] ?? "captures", parts: parts.slice(1), query: new URLSearchParams(search ?? "") };
 }
 
-const host = { toast, go, rerender: () => render() };
+const root = document.getElementById("app");
+if (!root) throw new Error("#app missing");
+const shell = h("div", { class: "app" });
+const toastHost = h("div", { class: "toast-host", "aria-live": "polite" });
+const offline = h("div", { class: "offline", role: "status" }, [icon("wifi-slash", 18), h("span", { text: "Hors ligne · lecture du cache. Garder et modifier attendent le retour du réseau." })]);
+root.append(shell, toastHost);
 
-function buildPanel(route: Route): HTMLElement {
-  switch (route.name) {
+app.toast = (message, action) => {
+  const toast = h("div", { class: "toast", role: "status" }, [h("span", { text: message })]);
+  if (action) {
+    const button = h("button", { type: "button", class: "link-btn", text: action.label });
+    button.addEventListener("click", () => {
+      toast.remove();
+      action.run();
+    });
+    toast.append(button);
+  }
+  toastHost.querySelectorAll(".toast").forEach((old) => old.remove());
+  toastHost.append(toast);
+  window.setTimeout(() => toast.remove(), action ? 5000 : 2200);
+};
+
+function paintConnection(): void {
+  offline.classList.toggle("is-live", !app.online());
+  window.dispatchEvent(new Event("drd:connection"));
+}
+reachability.changed = paintConnection;
+window.addEventListener("online", paintConnection);
+window.addEventListener("offline", paintConnection);
+
+function view(r: Route): HTMLElement {
+  switch (r.section) {
     case "captures":
-      return route.param
-        ? buildCapturePanel(route.param, host)
-        : buildInboxPanel(host, null);
-    case "collections":
-      return buildCollectionsPanel(route.param, host);
-    case "discovery":
-      return buildDiscoveryPanel(host);
-    case "packs":
-      return route.param ? buildPackPanel(route.param, host) : buildPacksPanel(host);
-    case "playground": {
-      panel = ws.dimension === "color" ? buildColorPanel(ctx) : ws.dimension === "components" ? buildComponentPanel(ctx) : buildTypePanel(ctx);
-      return panel.el;
-    }
+      return r.parts[0] ? buildAnalyse(r.parts[0], r.parts[1] ?? "palette") : buildCaptures(r.query);
+    case "bibliotheque":
+      return buildLibrary(r.parts[0] ?? "palettes", r.query);
+    case "items":
+      return buildItemPage(r.parts[0] ?? "");
+    case "tableaux":
+      return r.parts[0] ? buildBoard(r.parts[0]) : buildLibrary("tableaux", r.query);
+    case "atelier":
+      return buildAtelier(r.parts[0] ?? null);
+    case "exports":
+      return r.parts[0] ? buildExport(r.parts[0]) : buildExports(r.query);
     default:
-      return buildInboxPanel(host, route.query.get("error"));
+      return buildCaptures(r.query);
   }
+}
+
+const NAV_SECTION: Record<string, string> = { captures: "captures", bibliotheque: "bibliotheque", items: "bibliotheque", tableaux: "bibliotheque", atelier: "atelier", exports: "exports" };
+
+function signOut(): void {
+  app.user = null;
+  remember(null);
+  clearCache();
+  app.go("#/login");
 }
 
 function render(): void {
-  const route = currentRoute();
-
-  if (!session) {
-    rail.replaceChildren();
-    layout.classList.add("is-auth");
-    const pending = route.query.get("next");
-    const mode = route.name === "register" ? "register" : "login";
-    work.replaceChildren(
-      buildAuthPanel(mode, pending, async (user) => {
-        session = user;
-        rememberSession(user);
-        layout.classList.remove("is-auth");
-        await loadCollections();
-        if (pending) {
+  const r = route();
+  const redirect = REDIRECTS[r.section];
+  if (redirect) {
+    location.replace(redirect);
+    return;
+  }
+  if (!app.user) {
+    shell.classList.add("is-auth");
+    const next = r.query.get("next");
+    shell.replaceChildren(
+      buildAuth(r.section === "register" ? "register" : "login", next, async (user) => {
+        app.user = user;
+        remember(user);
+        if (next) {
           try {
-            const id = await startCapture(pending);
-            go(`#/captures/${id}`);
+            const id = await startCapture(next);
+            app.go(`#/captures/${id}/palette`);
             return;
           } catch (error) {
-            toast(error instanceof Error ? error.message : "Capture impossible");
+            app.toast(error instanceof Error ? error.message : "Capture impossible");
           }
         }
-        go("#/inbox");
-      }, go),
+        app.go("#/captures");
+      }, (to) => app.go(to)),
     );
     return;
   }
-
-  layout.classList.remove("is-auth");
-  if (route.name !== "playground") panel = null;
-  buildRail(route);
-  work.replaceChildren(buildPanel(route));
-  work.scrollTo({ top: 0 });
+  if (r.section === "login" || r.section === "register") {
+    app.go("#/captures");
+    return;
+  }
+  shell.classList.remove("is-auth");
+  const main = h("main", { class: "main" }, [offline, view(r)]);
+  shell.replaceChildren(buildNav(NAV_SECTION[r.section] ?? "captures", signOut), main);
+  paintConnection();
+  window.scrollTo({ top: 0 });
 }
 
-function buildHeader(): HTMLElement {
-  const collapse = h("button", {
-    type: "button",
-    class: "icon-button",
-    "aria-expanded": "true",
-    "aria-controls": "workarea",
-    title: "Replier la barre de sections",
-  }, [icon(ICONS.chevron, 18)]);
-  collapse.addEventListener("click", () => {
-    const collapsed = layout.classList.toggle("toc-collapsed");
-    collapse.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    collapse.title = collapsed ? "Afficher la barre de sections" : "Replier la barre de sections";
-  });
-
-  return h("header", { class: "topbar" }, [
-    collapse,
-    h("div", { class: "brand" }, [
-      h("span", { class: "brand-name", text: "DRD" }),
-      h("span", { class: "brand-sub", text: "design research & development — capturer, annoter, exporter" }),
-    ]),
-  ]);
-}
-
-function paintConnection(): void {
-  const offline = !reachability.online || !navigator.onLine;
-  banner.textContent = offline
-    ? "Hors ligne — lecture du cache local. Rien ne sera enregistré tant que la connexion n'est pas revenue."
-    : "";
-  banner.classList.toggle("is-live", offline);
-}
-
-window.addEventListener("hashchange", render);
-window.addEventListener("online", paintConnection);
-window.addEventListener("offline", paintConnection);
-reachability.changed = paintConnection;
-
-root.append(buildHeader(), banner, layout, toastBox);
-paintConnection();
+window.addEventListener("hashchange", () => {
+  const swap = () => render();
+  // A crossfade between screens, when the browser has it and motion is welcome.
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => void };
+  if (doc.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) doc.startViewTransition(swap);
+  else swap();
+});
 
 void (async () => {
   try {
     const { data } = await get<{ user: User }>("/api/me", { cache: false });
-    session = data.user;
-    rememberSession(data.user);
-    await loadCollections();
+    app.user = data.user;
+    remember(data.user);
   } catch (error) {
-    // Unreachable server is not a logout. The account is still valid, the
-    // cached collections are still readable, and throwing the user back to a
-    // login form they cannot submit would be the app deleting itself.
-    session = error instanceof ApiFailure && error.offline ? rememberedSession() : null;
-    if (session) {
-      try {
-        await loadCollections();
-      } catch {
-        /* Cached tree or none; the views render either way. */
-      }
-    } else {
-      forgetSession();
-    }
+    // Unreachable is not signed out: the cache is still readable.
+    app.user = error instanceof ApiFailure && error.offline ? remembered() : null;
   }
-  paintConnection();
   render();
 })();
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      /* Offline support is a bonus on an unsupported host, not a hard failure. */
-    });
-  });
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
 }

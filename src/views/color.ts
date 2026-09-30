@@ -15,7 +15,8 @@ import { isHex } from "../color";
 import { PALETTES, paletteById, rolesFor } from "../data/palettes";
 import { resolvePalette, hexFromHsl, hslOf } from "../state";
 import { applyVars, contrastChecks, previewVars } from "../tokens";
-import { chips, fieldset, h, icon, ICONS, slider, textButton } from "../ui/controls";
+import {chips, fieldset, h, slider, textButton } from "../ui/controls";
+import { icon } from "../ui/icons";
 import { mockup } from "../ui/previews";
 import { saveEntry } from "./save";
 import type { Panel, ViewContext } from "./view";
@@ -91,7 +92,7 @@ export function buildColorPanel(ctx: ViewContext): Panel {
     h("p", { class: "info-role", text: `Source · ${palette.source}` }),
     h("p", { class: "info-why", text: palette.learned }),
     palette.derivation
-      ? h("p", { class: "info-derivation" }, [icon(ICONS.warn, 14), h("span", { text: palette.derivation })])
+      ? h("p", { class: "info-derivation" }, [icon("warning", 14), h("span", { text: palette.derivation })])
       : h("span"),
     h("p", { class: "info-url", text: palette.sourceUrl }),
   ]);
@@ -110,7 +111,7 @@ export function buildColorPanel(ctx: ViewContext): Panel {
       if (isHex(text.value)) write(text.value.startsWith("#") ? text.value : `#${text.value}`);
     });
     const clear = h("button", { type: "button", class: "hex-clear", title: "Back to source value" }, [
-      icon(ICONS.reset, 13),
+      icon("arrow-clockwise", 13),
     ]);
     clear.addEventListener("click", () => {
       delete spec.overrides[key];
@@ -321,10 +322,10 @@ export function buildColorPanel(ctx: ViewContext): Panel {
     }),
     modeBody,
     fieldset("Keep it", "Saves palette, transforms and every override.", [
-      textButton("Save this palette", ICONS.save, () => {
+      textButton("Save this palette", "bookmark", () => {
         saveEntry(ctx, "color", `${palette.name} · ${spec.hueShift > 0 ? "+" : ""}${spec.hueShift}°`, structuredClone(spec));
       }),
-      textButton("Reset to source", ICONS.reset, () => {
+      textButton("Reset to source", "arrow-clockwise", () => {
         spec.overrides = {};
         spec.hueShift = 0;
         spec.satScale = 1;

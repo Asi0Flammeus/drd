@@ -5,6 +5,9 @@
  * re-renders while the thumb is still moving.
  */
 
+import { icon } from "./icons";
+import type { IconName } from "./icons";
+
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: Record<string, string> = {},
@@ -19,36 +22,6 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   for (const child of children) el.append(child);
   return el;
 }
-
-export function icon(path: string, size = 16): SVGSVGElement {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", String(size));
-  svg.setAttribute("height", String(size));
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.6");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  svg.setAttribute("aria-hidden", "true");
-  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  p.setAttribute("d", path);
-  svg.append(p);
-  return svg;
-}
-
-export const ICONS = {
-  save: "M5 4h11l3 3v13H5z M9 4v5h6V4 M8 13h8 M8 17h5",
-  trash: "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13",
-  copy: "M8 8h11v12H8z M5 16V4h11",
-  download: "M12 4v11 M7 11l5 5 5-5 M4 20h16",
-  upload: "M12 20V9 M7 13l5-5 5 5 M4 4h16",
-  reset: "M4 10a8 8 0 1 1 2 6 M4 5v5h5",
-  chevron: "M9 6l6 6-6 6",
-  check: "M5 13l4 4L19 7",
-  warn: "M12 4l9 16H3z M12 10v4 M12 17h.01",
-  dash: "M6 12h12",
-};
 
 export type SliderSpec = {
   label: string;
@@ -143,8 +116,8 @@ export function toggle(label: string, value: boolean, onChange: (value: boolean)
   ]);
 }
 
-export function textButton(label: string, iconPath: string, onClick: () => void): HTMLButtonElement {
-  const button = h("button", { type: "button", class: "action" }, [icon(iconPath), h("span", { text: label })]);
+export function textButton(label: string, iconName: IconName, onClick: () => void): HTMLButtonElement {
+  const button = h("button", { type: "button", class: "action" }, [icon(iconName, 18), h("span", { text: label })]);
   button.addEventListener("click", onClick);
   return button;
 }

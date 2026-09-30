@@ -1,17 +1,21 @@
 {
-  "name": "DRD — design research & development",
+  "name": "DRD · design research & development",
   "short_name": "DRD",
-  "description": "Capturer une page publique, annoter ce qui plaît et pourquoi, exporter un pack de références pour un agent.",
+  "description": "Capturer un site, garder ce qui plaît et pourquoi, exporter des jetons et un brief.",
   "id": "/app",
   "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f7faf9",
-  "theme_color": "#f7faf9",
+  "background_color": "#131313",
+  "theme_color": "#131313",
   "lang": "fr",
   "dir": "ltr",
-  "categories": ["design", "productivity", "utilities"],
+  "categories": [
+    "design",
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -33,8 +37,26 @@
     }
   ],
   "shortcuts": [
-    { "name": "Capturer une URL", "url": "/app#/inbox" },
-    { "name": "Collections", "url": "/app#/collections" },
-    { "name": "Packs", "url": "/app#/packs" }
-  ]
+    {
+      "name": "Captures",
+      "url": "/app#/captures"
+    },
+    {
+      "name": "Bibliothèque",
+      "url": "/app#/bibliotheque/palettes"
+    },
+    {
+      "name": "Exports",
+      "url": "/app#/exports"
+    }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
 }

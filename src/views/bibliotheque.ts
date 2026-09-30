@@ -6,7 +6,7 @@
  */
 
 import { del, get, mediaUrl, patch, post } from "../api";
-import type { Board, Item, Library, SearchResult } from "../api";
+import type { Board, BoardTile, Item, Library, SearchResult } from "../api";
 import { app, copyText, fullDate, relativeDate } from "../app";
 import { confidenceDot } from "../ui/confidence";
 import { h } from "../ui/controls";
@@ -299,7 +299,7 @@ async function renderBoards(list: HTMLElement, status: HTMLElement): Promise<voi
   try {
     const { data, stale } = await get<{ boards: Board[] }>("/api/boards");
     status.textContent = stale ? "hors ligne · cache" : "";
-    const grid = h("div", { class: "board-grid" }, data.boards.map((board) => h("a", { class: "board-card", href: `#/tableaux/${board.id}` }, [mosaic(board.covers), h("div", { class: "row-meta" }, [h("b", { text: board.name }), h("span", { class: "val", text: `${board.count} élément${board.count > 1 ? "s" : ""}` })])])));
+    const grid = h("div", { class: "board-grid" }, data.boards.map((board) => h("a", { class: "board-card", href: `#/tableaux/${board.id}` }, [mosaic(board.tiles), h("div", { class: "row-meta" }, [h("b", { text: board.name }), h("span", { class: "val", text: `${board.count} élément${board.count > 1 ? "s" : ""}` })])])));
     list.replaceChildren(h("div", { class: "capture-form" }, [name, create]), grid);
     if (!data.boards.length) grid.append(h("p", { class: "muted", text: "Aucun tableau. Un tableau mélange palettes, typos, composants et ambiances de plusieurs sites." }));
   } catch (error) {
@@ -307,8 +307,14 @@ async function renderBoards(list: HTMLElement, status: HTMLElement): Promise<voi
   }
 }
 
-function mosaic(covers: string[]): HTMLElement {
-  const cells = covers.slice(0, 4).map((hash) => h("div", {}, [h("img", { src: mediaUrl(hash) ?? "", alt: "", loading: "lazy" })]));
+function mosaic(tiles: BoardTile[]): HTMLElement {
+  const cells = tiles
+    .slice(0, 4)
+    .map((tile) =>
+      "blob" in tile
+        ? h("div", {}, [h("img", { src: mediaUrl(tile.blob) ?? "", alt: "", loading: "lazy" })])
+        : h("div", { class: "mosaic-colors" }, tile.colors.map((hex) => h("span", { style: `background:${hex}` }))),
+    );
   while (cells.length < 4) cells.push(h("div"));
   return h("div", { class: "mosaic", "aria-hidden": "true" }, cells);
 }
@@ -516,7 +522,7 @@ export function buildBoard(boardId: string): HTMLElement {
       root.replaceChildren(
         h("header", { class: "head" }, [back, h("div", { class: "head-text" }, [h("h1", { text: board.name }), h("span", { class: "val", text: `${board.count} élément${board.count > 1 ? "s" : ""}${kinds ? ` · ${kinds}` : ""}${stale ? " · hors ligne · cache" : ""}` })]), exp, rename, remove]),
         h("div", { class: "scroll" }, [
-          board.items.length ? h("div", { style: "max-width:420px" }, [mosaic(board.covers)]) : h("span"),
+          board.items.length ? h("div", { style: "max-width:420px" }, [mosaic(board.tiles)]) : h("span"),
           grid,
           ...(board.items.length ? [] : [h("div", { class: "empty" }, [h("h2", { text: "Tableau vide" }), h("p", { text: "Dans une fiche, « Ranger » ; dans la bibliothèque, sélectionnez plusieurs éléments puis « Ajouter au tableau »." })])]),
         ]),

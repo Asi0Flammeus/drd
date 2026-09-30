@@ -6,8 +6,15 @@
  * items those pictures, cut from the capture's stored page at the boxes the
  * references recorded, and derives tokens from their computed styles.
  *
- * It runs at start-up, is idempotent (`provenance.repaired`), and never
- * touches the `why`, `what` or tags the user wrote.
+ * Migrated palettes also carried v1's raw colour list: up to 20 colours
+ * labelled by element count, the page background called "text", accents
+ * guessed with no usage (C1). They are re-derived once from the same
+ * capture by the current palette rules, and the v1 payload stays in
+ * `provenance.rederived.previous` so the change can be reverted.
+ *
+ * It runs at start-up, is idempotent (`provenance.repaired`,
+ * `provenance.rederived`), and never touches the `why`, `what` or tags the
+ * user wrote.
  */
 
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -16,6 +23,9 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { config } from "../config.ts";
 import { db } from "../db.ts";
+import type { Db } from "../db.ts";
+import { loadInput } from "../analyse/load.ts";
+import { analysePalette } from "../analyse/palette.ts";
 import { hexOfKey } from "../analyse/color.ts";
 import { componentCss } from "../analyse/components.ts";
 import { COMPONENT_LABEL } from "../analyse/findings.ts";
@@ -93,8 +103,42 @@ async function cropBlob(captureId: string, box: Box, context: number): Promise<s
   }
 }
 
-export async function repairLegacyItems(): Promise<{ repaired: string[] }> {
+/** A migrated palette's colours from its v1 capture, by the current rules: roles, pairs, the rest as `others`. */
+async function rederivePalette(connection: Db, row: ItemRow, captureId: string): Promise<boolean> {
+  const capture = connection.prepare("SELECT final_url, requested_url, finished_at, width, height, meta FROM captures WHERE id = ?").get(captureId) as
+    | { final_url: string | null; requested_url: string; finished_at: string | null; width: number | null; height: number | null; meta: string }
+    | undefined;
+  const dir = join(config.mediaDir, captureId);
+  if (!capture || !existsSync(join(dir, "page.jpg"))) return false;
+  const elements = connection
+    .prepare("SELECT tag, label, guess, x, y, width, height, text, styles, crop FROM capture_elements WHERE capture_id = ? ORDER BY ordinal")
+    .all(captureId) as { tag: string; label: string; guess: string; x: number; y: number; width: number; height: number; text: string | null; styles: string; crop: string | null }[];
+  const input = await loadInput({ dir, url: capture.final_url ?? capture.requested_url, finishedAt: capture.finished_at, width: capture.width, height: capture.height, meta: capture.meta, elements });
+  const { palette } = analysePalette(input.artifacts, input.raster);
+  const previous = JSON.parse(row.data) as Record<string, unknown>;
+  const provenance = JSON.parse(row.provenance) as Record<string, unknown>;
+  provenance.rederived = {
+    at: new Date().toISOString(),
+    note: "couleurs recalculées depuis la même capture v1 : rôles par surface de pixels, accents seulement s'ils sont utilisés",
+    previous: { data: previous, signature: row.signature, confidence: row.confidence },
+  };
+  const data = { ...palette.data, ...(previous.meta ? { meta: previous.meta } : {}) };
+  connection
+    .prepare("UPDATE items SET data = ?, signature = ?, confidence = ?, provenance = ? WHERE id = ?")
+    .run(JSON.stringify(data), palette.signature, palette.confidence, JSON.stringify(provenance), row.id);
+  reindexItem(connection, row.id);
+  return true;
+}
+
+export async function repairLegacyItems(): Promise<{ repaired: string[]; rederived: string[] }> {
   const connection = db();
+  const rederived: string[] = [];
+  for (const row of connection.prepare("SELECT * FROM items WHERE kind = 'palette' AND capture_id IS NOT NULL").all() as ItemRow[]) {
+    const provenance = JSON.parse(row.provenance) as Record<string, unknown>;
+    const data = JSON.parse(row.data) as Record<string, unknown>;
+    if (!provenance.migratedFrom || provenance.rederived || !data.legacy || !row.capture_id) continue;
+    if (await rederivePalette(connection, row, row.capture_id)) rederived.push(row.id);
+  }
   const rows = connection.prepare("SELECT * FROM items").all() as ItemRow[];
   const repaired: string[] = [];
   for (const row of rows) {
@@ -119,7 +163,7 @@ export async function repairLegacyItems(): Promise<{ repaired: string[] }> {
         data.label = typeof data.text === "string" && data.text ? data.text : row.title;
         data.count = 1;
         data.tokens = tokens;
-        data.css = componentCss(kind, tokens);
+        data.css = componentCss(kind, tokens, null);
         data.hover = null;
         if (crop) {
           data.crop = `blob:${crop}`;
@@ -164,5 +208,5 @@ export async function repairLegacyItems(): Promise<{ repaired: string[] }> {
     repaired.push(row.id);
   }
   if (repaired.length) collectBlobs(connection);
-  return { repaired };
+  return { repaired, rederived };
 }

@@ -7,7 +7,7 @@
  */
 
 import { mediaUrl } from "../api";
-import type { ComponentData, ElevationData, Item, MoodData, PageData, PaletteData, RadiusData, SpacingData, TextStyle, TypeFamilyData, TypePairData, TypeScaleData } from "../api";
+import type { ComponentData, ElevationData, Item, MoodData, PageData, PaletteData, RadiusData, RoleSpecimen, SpacingData, TextStyle, TypeFamilyData, TypePairData, TypeScaleData } from "../api";
 import { num } from "../app";
 import { bands, miniBands } from "./bands";
 import type { BandColor } from "./bands";
@@ -44,6 +44,22 @@ function paletteColors(data: Partial<PaletteData> & { roles?: Record<string, str
 
 function styleCrop(style: Pick<TextStyle, "crop" | "family" | "size" | "weight" | "sample">, captureId: string | null): HTMLElement {
   return plate(mediaUrl(style.crop, captureId), `${style.sample} (${style.family} ${style.size} px, graisse ${style.weight})`);
+}
+
+const SPECIMEN_ROLE_LABEL: Record<RoleSpecimen["role"], string> = { display: "Display", titre: "Titre", corps: "Corps" };
+
+/** A family as the page sets it: its display, title and running text, real crops with their size, leading and weight (C2). */
+export function roleSpecimenRows(specimens: RoleSpecimen[], family: string, captureId: string | null): HTMLElement {
+  return h(
+    "div",
+    { class: "styles" },
+    specimens.map((s) =>
+      h("div", { class: "style-row" }, [
+        plate(mediaUrl(s.crop, captureId), `${s.sample} (${family} ${s.size} px, graisse ${s.weight})`),
+        h("div", { class: "style-meta" }, [h("b", { text: SPECIMEN_ROLE_LABEL[s.role] }), h("span", { class: "val", text: `${num(s.size, s.size % 1 ? 1 : 0)} / ${num(s.lineHeight, 0)} · ${s.weight}` })]),
+      ]),
+    ),
+  );
 }
 
 function componentLive(data: ComponentData): HTMLElement {
@@ -99,12 +115,15 @@ export function itemPreview(item: Item, size: Size = "row"): HTMLElement {
         for (const part of [d.display, d.text]) if (part) wrap.append(part.crop ? plate(mediaUrl(part.crop, cap), `${part.family} ${part.size} px`) : h("div", { class: "type-sample", text: part.family }));
       } else if (typeof data.family === "string" && Array.isArray((data as { specimens?: unknown }).specimens)) {
         const d = data as unknown as TypeFamilyData;
+        const byRole = d.roleSpecimens ?? [];
+        if (size === "detail" && byRole.length) wrap.append(roleSpecimenRows(byRole, d.family, cap));
+        else if (byRole[0]) wrap.append(plate(mediaUrl(byRole[0].crop, cap), `${byRole[0].sample} (${d.family} ${byRole[0].size} px)`));
         const live = liveFamily(d.fontFiles ?? [], d.family);
-        if (live) {
+        if (live && (size === "detail" || !byRole.length)) {
           const weight = d.weights[Math.floor(d.weights.length / 2)] ?? 400;
           wrap.append(h("div", { class: "type-sample", style: `font-family:"${live}";font-size:${size === "detail" ? 36 : 26}px;font-weight:${weight}`, text: "Aa Bb Gg Rr 0123 àéç" }));
         }
-        for (const specimen of d.specimens.slice(0, size === "detail" ? 6 : live ? 0 : 1)) wrap.append(plate(mediaUrl(specimen.file, cap), `${d.family} graisse ${specimen.weight}`, "checker"));
+        for (const specimen of d.specimens.slice(0, size === "detail" ? 6 : live || byRole.length ? 0 : 1)) wrap.append(plate(mediaUrl(specimen.file, cap), `${d.family} graisse ${specimen.weight}`, "checker"));
       } else if (Array.isArray(data.samples) && data.samples.length) {
         // A v1 font reference: real text crops cut from its page at migration.
         for (const sample of (data.samples as { family: string; size: number; weight: number; text: string; crop: string }[]).slice(0, size === "detail" ? 4 : 2)) {

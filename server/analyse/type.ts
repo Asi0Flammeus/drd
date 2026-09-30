@@ -7,7 +7,7 @@
 import type { CaptureArtifacts, TextRun } from "../capture/artifacts.ts";
 import { FONT_SOURCE_LABEL, isOflSource } from "../capture/artifacts.ts";
 import { round } from "./color.ts";
-import type { Evidence, Finding, FontSourceInfo, Origin, ScaleStep, TextStyle, TypeFamilyData, TypePairData, TypeRole, TypeScaleData } from "./findings.ts";
+import type { Evidence, Finding, FontSourceInfo, Origin, RoleSpecimen, ScaleStep, TextStyle, TypeFamilyData, TypePairData, TypeRole, TypeScaleData } from "./findings.ts";
 
 const GENERIC = ["serif", "sans-serif", "monospace", "cursive", "system-ui", "fantasy", "ui-serif", "ui-sans-serif", "ui-monospace", "-apple-system", "blinkmacsystemfont"];
 
@@ -106,6 +106,28 @@ function roleOf(runs: TextRun[], size: number, body: number): TypeRole {
     votes[role] = (votes[role] ?? 0) + run.glyph;
   }
   return (Object.entries(votes).sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))[0]?.[0] as TypeRole) ?? "corps";
+}
+
+/**
+ * One crop of real text per role, cut from the page where the family sets
+ * it: display is its largest title, titre its most used section title, corps
+ * its most used running text. Nav pills, buttons and labels are UI, not a
+ * specimen of the face (C2: v1 showed « Resources », « Pulse »).
+ */
+const SPECIMEN_ROLES: [RoleSpecimen["role"], TypeRole[]][] = [
+  ["display", ["display", "h1"]],
+  ["titre", ["h2", "h3"]],
+  ["corps", ["corps"]],
+];
+
+function roleSpecimens(styles: TextStyle[]): RoleSpecimen[] {
+  const out: RoleSpecimen[] = [];
+  for (const [role, roles] of SPECIMEN_ROLES) {
+    const candidates = styles.filter((s) => roles.includes(s.role) && s.crop && s.sample.trim().length >= 3);
+    const best = candidates.sort((a, b) => (role === "display" ? b.size - a.size || b.share - a.share : b.share - a.share))[0];
+    if (best?.crop) out.push({ role, size: best.size, weight: best.weight, lineHeight: best.lineHeight, sample: best.sample, crop: best.crop });
+  }
+  return out;
 }
 
 export type TypeResult = {
@@ -253,6 +275,7 @@ export function analyseType(artifacts: CaptureArtifacts): TypeResult {
       ? { label: sourceKind === "other" ? network[0].host : FONT_SOURCE_LABEL[sourceKind], host: network[0].host, licence: isOflSource(sourceKind) ? "OFL probable" : "à vérifier" }
       : { label: "police système ou source inconnue", host: null, licence: "à vérifier" };
     const specimens = artifacts.media.specimens.filter((s) => bare(familyName(s.family, topStack)) === bare(family)).map(({ weight, italic, file }) => ({ weight, italic, file }));
+    const byRole = roleSpecimens(entry.styles);
     const fontFiles = network.filter((font) => font.file && isOflSource(font.source)).map((font) => ({ file: font.file as string, weight: font.weight ?? "400", style: font.style ?? "normal" }));
     const roles = [...new Set(entry.styles.map((s) => s.role))];
     const generic = genericOf(topStack, family);
@@ -279,12 +302,13 @@ export function analyseType(artifacts: CaptureArtifacts): TypeResult {
         source,
         mismatch,
         specimens,
+        roleSpecimens: byRole,
         fontFiles,
         share: round(entry.glyph, 4),
         roles,
         bodySize: entry.styles.some((s) => s.size === body) ? body : null,
       },
-      media: [...specimens.map((s) => s.file), ...fontFiles.map((f) => f.file), ...entry.styles.map((s) => s.crop).filter((f): f is string => Boolean(f)).slice(0, 4)],
+      media: [...new Set([...byRole.map((s) => s.crop), ...specimens.map((s) => s.file), ...fontFiles.map((f) => f.file), ...entry.styles.map((s) => s.crop).filter((f): f is string => Boolean(f)).slice(0, 4)])],
       locations: entry.styles.flatMap((s) => s.locations).slice(0, 40),
       signature: `family:${bare(family)}`,
     });

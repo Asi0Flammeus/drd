@@ -53,8 +53,15 @@ test("light serif fixture: warm fond, teal accent, a failing sand button, three 
   assert.ok(pairs.some((p) => p.bg === "#c9b48c" && p.grade === "fail"), "white on sand must be reported as a failure");
   const cards = findings.filter((f) => f.kind === "component" && f.subkind === "card");
   assert.equal(cards.reduce((n, f) => n + (f.data as { count: number }).count, 0), 3);
-  const families = findings.filter((f) => f.kind === "type" && f.subkind === "family").map((f) => (f.data as { generic: string }).generic);
-  assert.ok(families.includes("serif") && families.includes("sans-serif"));
+  const families = findings.filter((f) => f.kind === "type" && f.subkind === "family").map((f) => f.data as { generic: string; roleSpecimens: { role: string; size: number; crop: string }[] });
+  assert.ok(families.some((f) => f.generic === "serif") && families.some((f) => f.generic === "sans-serif"));
+  // Role specimens are the page's own titles and text (C2), never a nav link or a button label.
+  const serif = families.find((f) => f.generic === "serif")?.roleSpecimens.map((s) => `${s.role} ${s.size}`);
+  assert.deepEqual(serif, ["display 53.7", "titre 40.3"]);
+  const sans = families.find((f) => f.generic === "sans-serif")?.roleSpecimens ?? [];
+  // The 22.7 px hero lede is set large enough to read as a title; the running text is the 17 px body copy, not the 15 px nav or button labels.
+  assert.deepEqual(sans.map((s) => `${s.role} ${s.size}`), ["titre 22.7", "corps 17"]);
+  assert.ok(sans.every((s) => /\.webp$/.test(s.crop)));
 });
 
 test("dark sans fixture: dark fond, lime accent, the 1.25 scale, four cards", { timeout: 150_000 }, async () => {

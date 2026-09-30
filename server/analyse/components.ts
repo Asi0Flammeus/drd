@@ -19,7 +19,26 @@ export function visibleShadow(value: string | null | undefined): string | null {
 
 const ORDER: ComponentKind[] = ["navigation", "hero", "heading", "button", "link-button", "card", "field", "form", "badge", "footer"];
 
-export function componentCss(kind: ComponentKind, tokens: ComponentTokenView): string {
+/** A hover value as CSS: colours are stored as `r,g,b` keys. */
+function hoverValue(key: keyof HoverStyle, value: string | null): string {
+  if (value === null) return key === "background" ? "transparent" : "currentColor";
+  if (/^\d+,\d+,\d+$/.test(value)) return hexOfKey(value);
+  if (key === "boxShadow") return visibleShadow(value) ?? "none";
+  return value;
+}
+
+const HOVER_PROPERTY: Record<keyof HoverStyle, string> = {
+  background: "background",
+  color: "color",
+  borderColor: "border-color",
+  boxShadow: "box-shadow",
+  transform: "transform",
+  textDecoration: "text-decoration",
+  opacity: "opacity",
+};
+
+/** The rest state as a rule, then what the hover pass saw change as a `:hover` rule (D5). */
+export function componentCss(kind: ComponentKind, tokens: ComponentTokenView, hover: { before: HoverStyle; after: HoverStyle } | null): string {
   const lines: string[] = [];
   if (tokens.background) lines.push(`  background: ${tokens.background.hex};`);
   if (tokens.foreground) lines.push(`  color: ${tokens.foreground.hex};`);
@@ -37,7 +56,13 @@ export function componentCss(kind: ComponentKind, tokens: ComponentTokenView): s
   if (tokens.shadow) lines.push(`  box-shadow: ${tokens.shadow};`);
   if (tokens.transition) lines.push(`  transition: ${tokens.transition.property} ${tokens.transition.duration} ${tokens.transition.easing};`);
   const selector = { button: ".bouton", "link-button": ".lien-bouton", field: ".champ", card: ".carte", navigation: ".navigation", hero: ".hero", footer: ".pied-de-page", badge: ".badge", form: ".formulaire", heading: ".titre" }[kind];
-  return `${selector} {\n${lines.join("\n")}\n}`;
+  const rest = `${selector} {\n${lines.join("\n")}\n}`;
+  if (!hover) return rest;
+  const changed = (Object.keys(HOVER_PROPERTY) as (keyof HoverStyle)[]).filter(
+    (key) => hover.before[key] !== hover.after[key] && !(key === "boxShadow" && !visibleShadow(hover.before[key]) && !visibleShadow(hover.after[key])),
+  );
+  if (!changed.length) return rest;
+  return `${rest}\n\n${selector}:hover {\n${changed.map((key) => `  ${HOVER_PROPERTY[key]}: ${hoverValue(key, hover.after[key])};`).join("\n")}\n}`;
 }
 
 export function analyseComponents(
@@ -110,7 +135,7 @@ export function analyseComponents(
         count: members.length,
         tokens,
         hover: hover ? { changes, crop: hover.file } : null,
-        css: componentCss(kind, tokens),
+        css: componentCss(kind, tokens, hover ?? null),
         dhash,
         crop,
       },

@@ -174,8 +174,11 @@ export function analysePalette(artifacts: CaptureArtifacts, raster: Raster): Pal
   }
   for (const entry of dom) {
     const best = entry.cluster;
-    // A version-1 capture has no grid samples: its background area is the pixel share of what it paints.
-    if (samples.total === 0 && best && artifacts.dom.colors.some((c) => c.rgb === entry.key && c.bgCount > 0)) entry.bgShare = best.share;
+    // A version-1 capture has no grid samples: its background area is the
+    // pixel share of what it paints. v1 labelled colours by element count, so
+    // a cluster covering 3 % of the page or more is area even when v1 called
+    // it text (linear's #08090a, 69 % of the page, was "text" in v1).
+    if (samples.total === 0 && best && (best.share >= 0.03 || artifacts.dom.colors.some((c) => c.rgb === entry.key && c.bgCount > 0))) entry.bgShare = best.share;
   }
 
   const assigned = new Set<DomColor>();
@@ -208,9 +211,14 @@ export function analysePalette(artifacts: CaptureArtifacts, raster: Raster): Pal
   const chroma = (d: DomColor) => Math.hypot(d.lab.a, d.lab.b);
   const chromatic = dom.filter((d) => !assigned.has(d) && chroma(d) >= 0.04);
   const interactive = chromatic.filter((d) => d.interactiveShare > 0).sort((a, b) => chroma(b) * b.interactiveShare - chroma(a) * a.interactiveShare);
+  // Without an interactive colour, an accent must be really used: half a
+  // percent of the text or of the surface, or a pixel cluster of its own.
+  // Chroma alone crowned nematis' #ff0000 from 0.07 % of its text.
   const accents = interactive.length
     ? interactive
-    : chromatic.sort((a, b) => chroma(b) * (b.bgShare + b.textShare + b.otherShare) - chroma(a) * (a.bgShare + a.textShare + a.otherShare));
+    : chromatic
+        .filter((d) => d.textShare >= 0.005 || d.bgShare >= 0.005 || d.otherShare >= 0.005 || d.cluster !== null)
+        .sort((a, b) => chroma(b) * (b.bgShare + b.textShare + b.otherShare) - chroma(a) * (a.bgShare + a.textShare + a.otherShare));
   const accent = accents[0];
   assign(accent, "Accent", "accent", interactive.length ? "chroma × part interactive la plus haute" : "aucune couleur vive sur un élément interactif : chroma × usage", !interactive.length);
   if (accent) {

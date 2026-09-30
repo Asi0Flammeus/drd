@@ -183,8 +183,9 @@ function start(): void {
   const applied = migrate();
   if (applied.applied.length) console.log(`[drd] migrations applied: ${applied.applied.join(", ")}`);
   repairLegacyItems()
-    .then(({ repaired }) => {
+    .then(({ repaired, rederived }) => {
       if (repaired.length) console.log(`[drd] legacy items given their extracted pictures: ${repaired.join(", ")}`);
+      if (rederived.length) console.log(`[drd] legacy palettes re-derived from their capture (v1 payload kept in provenance): ${rederived.join(", ")}`);
     })
     .catch((error) => console.error("[drd] legacy item repair", error));
   purgeExpiredSessions();

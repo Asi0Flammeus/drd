@@ -101,12 +101,16 @@ export type TypeFamilyData = {
   source: FontSourceInfo;
   mismatch: { declared: string; rendered: string } | null;
   specimens: { weight: number; italic: boolean; file: string }[];
+  /** The family set as the page sets it, one crop of real text per role (C2): its largest title, its section titles, its running text. */
+  roleSpecimens: RoleSpecimen[];
   /** OFL families only (open question 3): the files the page downloaded. */
   fontFiles: { file: string; weight: string; style: string }[];
   share: number;
   roles: TypeRole[];
   bodySize: number | null;
 };
+
+export type RoleSpecimen = { role: "display" | "titre" | "corps"; size: number; weight: number; lineHeight: number; sample: string; crop: string };
 
 export type TypePairData = {
   display: { family: string; generic: string; size: number; weight: number; crop: string | null };

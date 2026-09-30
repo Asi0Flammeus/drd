@@ -15,6 +15,7 @@ import { h } from "../ui/controls";
 import { icon } from "../ui/icons";
 import { keepButton } from "../ui/keep";
 import { plate } from "../ui/plate";
+import { roleSpecimenRows } from "../ui/preview";
 import { confirmSheet, openSheet } from "../ui/sheet";
 import { tabs } from "../ui/tabs";
 import { initials, siteName, stageRow } from "./captures";
@@ -148,10 +149,10 @@ export function buildAnalyse(captureId: string, tab: string): HTMLElement {
   const load = async () => {
     window.clearTimeout(timer);
     try {
-      const { data, stale } = await get<CaptureDetail>(`/api/captures/${captureId}`);
+      // Stale data means the network failed, and the shell's offline banner already says so (D10).
+      const { data } = await get<CaptureDetail>(`/api/captures/${captureId}`);
       if (!root.isConnected && root.childElementCount) return;
       render(data);
-      if (stale) root.prepend(h("div", { class: "offline is-live", text: "Hors ligne · cache" }));
     } catch (error) {
       root.replaceChildren(h("div", { class: "scroll" }, [h("div", { class: "empty" }, [h("h2", { text: "Capture indisponible" }), h("p", { text: error instanceof Error ? error.message : "" }), h("a", { class: "btn", href: "#/captures", text: "Retour aux captures" })])]));
     }
@@ -330,6 +331,7 @@ function typoTab(ctx: TabContext): Node[] {
         h("dd", { class: "val", text: d.declared.join(" | ") }),
       ]),
     );
+    if (d.roleSpecimens?.length) card.append(roleSpecimenRows(d.roleSpecimens, d.family, cap));
     if (d.specimens.length) card.append(h("div", { class: "specimens" }, d.specimens.map((s) => plate(`/media/${cap}/${s.file}`, `${d.family} graisse ${s.weight}`, "checker"))));
     out.push(card);
   }

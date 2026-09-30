@@ -230,11 +230,15 @@ export type TypeFamilyData = {
   source: { label: string; host: string | null; licence: string };
   mismatch: { declared: string; rendered: string } | null;
   specimens: { weight: number; italic: boolean; file: string }[];
+  /** Absent on families analysed before 30/09 (C2). */
+  roleSpecimens?: RoleSpecimen[];
   fontFiles: { file: string; weight: string; style: string }[];
   share: number;
   roles: string[];
   bodySize: number | null;
 };
+
+export type RoleSpecimen = { role: "display" | "titre" | "corps"; size: number; weight: number; lineHeight: number; sample: string; crop: string };
 
 export type TypePairData = {
   display: { family: string; generic: string; size: number; weight: number; crop: string | null };
@@ -341,7 +345,10 @@ export type SearchResult = {
   mode: "all" | "any" | "none";
 };
 
-export type Board = { id: string; name: string; description: string; count: number; covers: string[]; kinds: string[]; usedAt: string | null; createdAt: string };
+/** A cover cell: an item's picture, or the colours of an item that has none (a palette). */
+export type BoardTile = { blob: string } | { colors: string[] };
+
+export type Board = { id: string; name: string; description: string; count: number; tiles: BoardTile[]; kinds: string[]; usedAt: string | null; createdAt: string };
 
 export type Candidate = {
   id: string;

@@ -632,18 +632,31 @@ export function search(userId: string, query: SearchQuery): SearchResult {
 
 /* --------------------------------------------------------------- boards ----- */
 
-export type BoardView = { id: string; name: string; description: string; count: number; covers: string[]; kinds: string[]; usedAt: string | null; createdAt: string };
+/** One cell of a board's cover mosaic: an item's picture, or the colours of an item that has none (a palette, D8). */
+export type BoardTile = { blob: string } | { colors: string[] };
+
+export type BoardView = { id: string; name: string; description: string; count: number; tiles: BoardTile[]; kinds: string[]; usedAt: string | null; createdAt: string };
 
 function boardView(connection: Db, row: { id: string; name: string; description: string; used_at: string | null; created_at: string }): BoardView {
   const members = connection
     .prepare("SELECT i.kind, i.cover, i.data FROM board_items bi JOIN items i ON i.id = bi.item_id WHERE bi.board_id = ? ORDER BY bi.position, bi.added_at")
     .all(row.id) as { kind: string; cover: string | null; data: string }[];
+  const tiles: BoardTile[] = [];
+  for (const member of members) {
+    if (tiles.length >= 4) break;
+    if (member.cover) {
+      tiles.push({ blob: member.cover });
+      continue;
+    }
+    const colors = colorsOf(member.kind, parse(member.data, {})).map((c) => c.hex);
+    if (colors.length) tiles.push({ colors: [...new Set(colors)].slice(0, 6) });
+  }
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     count: members.length,
-    covers: members.map((m) => m.cover).filter((c): c is string => Boolean(c)).slice(0, 4),
+    tiles,
     kinds: [...new Set(members.map((m) => m.kind))],
     usedAt: row.used_at,
     createdAt: row.created_at,

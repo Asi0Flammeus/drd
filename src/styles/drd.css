@@ -1711,6 +1711,16 @@ p {
   display: block;
 }
 
+/* A palette has no picture: its colours, as bands, fill the cell. */
+.mosaic-colors {
+  display: flex;
+  height: 100%;
+}
+
+.mosaic-colors span {
+  flex: 1;
+}
+
 .mixed-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

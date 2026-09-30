@@ -90,11 +90,19 @@ COPY tsconfig.server.json ./
 # directory is the only writable path the application needs. Both it and the
 # browser cache are group-writable so the image still works when compose runs
 # it as the uid that owns a bind-mounted ./data.
+# COPY keeps the host's file modes: a source written under a 077 umask arrives
+# 0600, root-owned, and the server dies with EACCES at start. Everything the
+# app runs from is made world-readable here, whatever the checkout looked like.
 RUN useradd --system --create-home --uid 10001 drd \
     && mkdir -p /app/data \
+    && chmod -R a+rX /app/dist /app/server /app/scripts /app/tsconfig.server.json \
     && chown -R drd:0 /app/data /opt/puppeteer \
     && chmod -R g+rwX /app/data /opt/puppeteer
 USER drd
+# The build fails here, not at start in production, if anything the server or
+# the client is served from is unreadable to a non-root uid.
+RUN unreadable="$(find /app/dist /app/server /app/scripts /app/tsconfig.server.json ! -readable)" \
+    && if [ -n "$unreadable" ]; then echo "unreadable for a non-root uid:" "$unreadable"; exit 1; fi
 # That uid may not own /home/drd, and Chrome needs a writable HOME. /tmp is a
 # tmpfs in the compose file.
 ENV HOME=/tmp

@@ -160,6 +160,20 @@ export function itemPreview(item: Item, size: Size = "row"): HTMLElement {
       break;
     }
     case "mood": {
+      if (item.subkind === "image-original" || item.subkind === "image-derivative") {
+        const image = mediaUrl(item.cover);
+        if (image) wrap.append(h("img", { class: "visual-reference", src: image, alt: item.title, loading: "lazy" }));
+        const palettes = Array.isArray(data.palettes) ? data.palettes as { intent: string; colors: { hex: string; share: number }[] }[] : [];
+        if (size === "detail") {
+          const label: Record<string, string> = { dominant: "Dominante", vibrant: "Vibrante", muted: "Douce et neutre" };
+          for (const palette of palettes) {
+            wrap.append(h("section", { class: "image-palette" }, [h("b", { text: label[palette.intent] ?? palette.intent }), bands(palette.colors.map((color) => ({ role: color.hex, hex: color.hex, value: null, share: color.share })), { label: label[palette.intent] ?? palette.intent })]));
+          }
+        } else if (palettes[0]) {
+          wrap.append(miniBands(palettes[0].colors.map((color) => ({ role: color.hex, hex: color.hex, value: null, share: color.share }))));
+        }
+        break;
+      }
       const d = data as unknown as MoodData;
       const crops = (d.images ?? []).filter((i) => i.crop);
       if (crops.length) wrap.append(h("div", { class: "mood-images" }, crops.slice(0, size === "detail" ? 6 : 3).map((i) => plate(mediaUrl(i.crop, cap), "Image de la page"))));

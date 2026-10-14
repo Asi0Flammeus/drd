@@ -7,7 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { config } from "../config.ts";
 import type { Db } from "../db.ts";
@@ -40,6 +40,20 @@ export function storeBlob(connection: Db, source: string): string | null {
   connection
     .prepare("INSERT OR IGNORE INTO blobs (hash, mime, width, height, bytes, created_at) VALUES (?, ?, NULL, NULL, ?, ?)")
     .run(hash, MIME[extname(source).toLowerCase()] ?? "application/octet-stream", bytes.length, new Date().toISOString());
+  return hash;
+}
+
+/** Stores already downloaded bytes without a temporary second copy. */
+export function storeBlobBytes(connection: Db, bytes: Buffer, mime: string, width: number | null, height: number | null): string {
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const target = blobPath(hash);
+  if (!existsSync(target)) {
+    mkdirSync(join(config.mediaDir, "blobs", hash.slice(0, 2)), { recursive: true });
+    writeFileSync(target, bytes, { flag: "wx" });
+  }
+  connection
+    .prepare("INSERT OR IGNORE INTO blobs (hash, mime, width, height, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(hash, mime, width, height, bytes.length, new Date().toISOString());
   return hash;
 }
 

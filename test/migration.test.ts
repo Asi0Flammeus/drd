@@ -48,7 +48,7 @@ test("references, collections and packs survive migration 3 with the same ids", 
   c.prepare("INSERT INTO packs (id, user_id, name, brief, ref_ids, created_at) VALUES ('p1', 'u1', 'Pack', '', ?, ?)").run(JSON.stringify(["r-site", "r-comp", "r-pal"]), now);
 
   const result = migrate();
-  assert.deepEqual(result.applied, [3]);
+  assert.deepEqual(result.applied, [3, 4]);
 
   // Same ids, mapped kinds, the reason and tags untouched.
   const items = c.prepare("SELECT id, kind, why, what FROM items ORDER BY id").all() as { id: string; kind: string; why: string; what: string }[];

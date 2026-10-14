@@ -76,6 +76,19 @@ export const config = {
     ),
   },
 
+  image: {
+    maxBytes: num("DRD_IMAGE_MAX_BYTES", 20_000_000),
+    maxPixels: num("DRD_IMAGE_MAX_PIXELS", 40_000_000),
+    maxDimension: num("DRD_IMAGE_MAX_DIMENSION", 12_000),
+    requestTimeoutMs: num("DRD_IMAGE_TIMEOUT_MS", 20_000),
+    visionEndpoint: str("DRD_VISION_ENDPOINT", ""),
+    visionModel: str("DRD_VISION_MODEL", ""),
+    visionApiKey: str("DRD_VISION_API_KEY", ""),
+    generationEndpoint: str("DRD_IMAGE_GENERATION_ENDPOINT", ""),
+    generationModel: str("DRD_IMAGE_GENERATION_MODEL", ""),
+    generationApiKey: str("DRD_IMAGE_GENERATION_API_KEY", ""),
+  },
+
   /** Optional conversational layer. Export never reads this. */
   llm: {
     endpoint: str("DRD_LLM_ENDPOINT", ""),

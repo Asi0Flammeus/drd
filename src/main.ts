@@ -24,7 +24,7 @@ import { buildAnalyse } from "./views/analyse";
 import { buildAtelier } from "./views/atelier";
 import { buildAuth } from "./views/auth";
 import { buildBoard, buildItemPage, buildLibrary } from "./views/bibliotheque";
-import { buildCaptures, startCapture } from "./views/captures";
+import { buildCaptures, startReference } from "./views/captures";
 import { buildExport, buildExports } from "./views/exports";
 
 /**
@@ -144,8 +144,8 @@ function render(): void {
         remember(user);
         if (next) {
           try {
-            const id = await startCapture(next);
-            app.go(`#/captures/${id}/palette`);
+            const started = await startReference(next);
+            app.go(started.kind === "image" ? `#/items/${started.itemId}` : `#/captures/${started.id}/palette`);
             return;
           } catch (error) {
             app.toast(error instanceof Error ? error.message : "Capture impossible");

@@ -195,6 +195,16 @@ const MIGRATIONS: Migration[] = [
     sql: LIBRARY_SQL,
     up: migrateLibrary,
   },
+  {
+    id: 4,
+    name: "image references and nested boards",
+    sql: `
+      ALTER TABLE boards ADD COLUMN parent_id TEXT REFERENCES boards(id) ON DELETE CASCADE;
+      CREATE INDEX boards_parent ON boards(user_id, parent_id, position);
+      CREATE UNIQUE INDEX items_original_content
+        ON items(user_id, signature) WHERE subkind = 'image-original';
+    `,
+  },
 ];
 
 /** `target` stops at a given migration: the seam the migration tests use to build an old database. */

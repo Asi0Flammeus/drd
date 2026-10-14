@@ -39,10 +39,9 @@ export function stageRow(capture: CaptureSummary): HTMLElement {
   );
 }
 
-/** An explicit capture request (shortcut, share sheet, login replay): always a new capture. */
-export async function startCapture(url: string): Promise<string> {
-  const created = await post<{ id: string }>("/api/captures", { url, force: true });
-  return created.id;
+/** Classifies a URL from the response, then starts a page capture or opens an image reference. */
+export async function startReference(url: string, force = true): Promise<{ kind: "capture"; id: string } | { kind: "image"; itemId: string; already: boolean }> {
+  return post("/api/references/from-url", { url, force });
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
@@ -121,8 +120,13 @@ export function buildCaptures(query: URLSearchParams): HTMLElement {
     message.textContent = "";
     submit.disabled = true;
     try {
-      const created = await post<{ id: string }>("/api/captures", { url });
+      const created = await startReference(url, false);
       input.value = "";
+      if (created.kind === "image") {
+        app.go(`#/items/${created.itemId}`);
+        app.toast(created.already ? "Image déjà conservée" : "Image conservée");
+        return;
+      }
       await load();
       app.toast("Capture lancée", { label: "Suivre", run: () => app.go(`#/captures/${created.id}/palette`) });
     } catch (error) {
@@ -132,7 +136,7 @@ export function buildCaptures(query: URLSearchParams): HTMLElement {
         if (existing) message.append(h("a", { class: "link-btn", href: `#/captures/${existing.id}/palette`, text: "Ouvrir" }));
         const again = h("button", { type: "button", class: "link-btn", text: "Recapturer" });
         again.addEventListener("click", async () => {
-          await post("/api/captures", { url, force: true });
+          await startReference(url, true);
           message.textContent = "";
           input.value = "";
           await load();

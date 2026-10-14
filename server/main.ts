@@ -28,6 +28,7 @@ import { healthRoutes } from "./routes/health.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { captureRoutes, startCapture } from "./routes/captures.ts";
 import { libraryRoutes } from "./routes/library.ts";
+import { imageRoutes, ingestImageUrl } from "./routes/images.ts";
 import { discoveryRoutes } from "./routes/discovery.ts";
 import { exportRoutes } from "./routes/exports.ts";
 import { assistantRoutes } from "./routes/assistant.ts";
@@ -41,6 +42,7 @@ const routes: Route[] = [
   ...healthRoutes,
   ...authRoutes,
   ...captureRoutes,
+  ...imageRoutes,
   ...libraryRoutes,
   ...discoveryRoutes,
   ...exportRoutes,
@@ -166,6 +168,11 @@ async function capture(req: IncomingMessage, res: ServerResponse, target: URL | 
   }
 
   try {
+    const reference = await ingestImageUrl(user.id, target.toString());
+    if (reference.kind === "image") {
+      redirect(res, `/app#/items/${reference.itemId}`);
+      return;
+    }
     const started = await startCapture(user.id, target.toString());
     redirect(res, `/app#/captures/${started.id}/palette`);
   } catch (error) {

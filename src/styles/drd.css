@@ -2660,3 +2660,84 @@ dialog.sheet.full {
   flex: 1 0 30%;
   min-height: 72px;
 }
+
+.visual-reference {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  border-radius: var(--r-plate);
+  background: var(--paper);
+}
+
+.image-palette,
+.image-reference-controls,
+.generation-box {
+  display: grid;
+  gap: var(--s2);
+}
+
+.image-reference-controls {
+  margin-block: var(--s4);
+}
+
+.image-tag-list {
+  display: grid;
+  gap: var(--s2);
+}
+
+.image-tag {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s3);
+  align-items: center;
+  padding: var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+}
+
+.image-tag p {
+  margin: 3px 0 0;
+}
+
+.image-tag.accepted,
+.image-tag.edited {
+  border-color: var(--mark);
+}
+
+.image-tag.rejected {
+  opacity: 0.62;
+}
+
+.generation-box {
+  padding: var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-plate);
+}
+
+.moodboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--s3);
+  align-items: start;
+}
+
+.moodboard .row {
+  border: 1px solid var(--rule);
+  background: var(--mat);
+}
+
+.moodboard .visual-reference {
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+@media (max-width: 620px) {
+  .image-tag {
+    grid-template-columns: 1fr;
+  }
+
+  .moodboard {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

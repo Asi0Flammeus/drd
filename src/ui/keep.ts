@@ -147,10 +147,10 @@ export async function pickBoard(itemIds: string[], onDone?: () => void): Promise
     onDone?.();
   };
   for (const board of boards) {
-    const button = h("button", { type: "button", class: "btn" }, [icon("squares", 18), h("span", { text: board.name }), h("span", { class: "val muted", text: String(board.count) })]);
+    const button = h("button", { type: "button", class: "btn" }, [icon("squares", 18), h("span", { text: board.path }), h("span", { class: "val muted", text: String(board.count) })]);
     button.addEventListener("click", async () => {
       await post(`/api/boards/${board.id}/items`, { itemIds });
-      done(board.name);
+      done(board.path);
     });
     list.append(button);
   }

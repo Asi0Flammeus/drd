@@ -348,7 +348,7 @@ export type SearchResult = {
 /** A cover cell: an item's picture, or the colours of an item that has none (a palette). */
 export type BoardTile = { blob: string } | { colors: string[] };
 
-export type Board = { id: string; name: string; description: string; count: number; tiles: BoardTile[]; kinds: string[]; usedAt: string | null; createdAt: string };
+export type Board = { id: string; name: string; path: string; parentId: string | null; description: string; count: number; tiles: BoardTile[]; kinds: string[]; usedAt: string | null; createdAt: string };
 
 export type Candidate = {
   id: string;

@@ -92,6 +92,7 @@ export function buildPack(pack: PackInfo, items: ItemView[], formats: readonly F
       confidence: item.confidence,
       keptAt: item.createdAt,
       image: imageNames[item.id] ?? null,
+      mediaClass: item.subkind === "image-derivative" ? "generated-derivative" : item.subkind === "image-original" ? "captured-original" : "extracted-reference",
       provenance: item.provenance,
       data: item.data,
     })),
@@ -110,13 +111,14 @@ export function buildPack(pack: PackInfo, items: ItemView[], formats: readonly F
     ...(want.has("css") ? ["- `tokens.css` : les mêmes jetons en propriétés CSS, nommées par rôle."] : []),
     ...(want.has("tailwind") ? ["- `theme.css` : un bloc `@theme` Tailwind v4."] : []),
     "- `pack.json` : le manifeste complet, provenance comprise.",
-    ...(images.length ? ["- `images/` : l'élément extrait de chaque référence (découpe, spécimen), jamais une page entière."] : []),
+    ...(images.length ? ["- `images/` : médias privés du pack. `pack.json` distingue les originaux capturés, les dérivés générés et les extraits de page."] : []),
     "",
     "## Provenance",
     "",
     ...items.map((item) => {
       const p = item.provenance as { capturedAt?: string };
-      return `- ${item.title} : ${item.sourceUrl ?? "atelier"}${p.capturedAt ? `, capturé le ${p.capturedAt.slice(0, 10)}` : ""}${imageNames[item.id] ? ` · \`${imageNames[item.id]}\`` : ""}`;
+      const label = item.subkind === "image-derivative" ? "GÉNÉRÉ" : item.subkind === "image-original" ? "ORIGINAL" : "EXTRAIT";
+      return `- [${label}] ${item.title} : ${item.sourceUrl ?? "atelier"}${p.capturedAt ? `, capturé le ${p.capturedAt.slice(0, 10)}` : ""}${imageNames[item.id] ? ` · \`${imageNames[item.id]}\`` : ""}`;
     }),
     "",
     ...(warnings.length ? ["## Avertissements", "", ...warnings.map((w) => `- ${w.message}`), ""] : []),

@@ -1,10 +1,10 @@
 /**
  * The library: items, boards, search, duplicates (§5).
  *
- * The only module that writes `items`, `item_tags`, `item_colors`,
- * `items_fts`, `boards` and `board_items`. Routes call these functions and
- * nothing else touches those tables, so the derived indexes stay true to the
- * rows they index.
+ * This module owns general writes to `items`, `item_tags`, `item_colors`,
+ * `items_fts`, `boards` and `board_items`. The image-reference module owns
+ * its two item subtypes and calls the same indexing functions after each
+ * mutation, so the derived indexes stay true to the rows they index.
  */
 
 import { randomUUID } from "node:crypto";
@@ -635,9 +635,9 @@ export function search(userId: string, query: SearchQuery): SearchResult {
 /** One cell of a board's cover mosaic: an item's picture, or the colours of an item that has none (a palette, D8). */
 export type BoardTile = { blob: string } | { colors: string[] };
 
-export type BoardView = { id: string; name: string; description: string; count: number; tiles: BoardTile[]; kinds: string[]; usedAt: string | null; createdAt: string };
+export type BoardView = { id: string; name: string; path: string; parentId: string | null; description: string; count: number; tiles: BoardTile[]; kinds: string[]; usedAt: string | null; createdAt: string };
 
-function boardView(connection: Db, row: { id: string; name: string; description: string; used_at: string | null; created_at: string }): BoardView {
+function boardView(connection: Db, row: { id: string; user_id?: string; parent_id: string | null; name: string; description: string; used_at: string | null; created_at: string }): BoardView {
   const members = connection
     .prepare("SELECT i.kind, i.cover, i.data FROM board_items bi JOIN items i ON i.id = bi.item_id WHERE bi.board_id = ? ORDER BY bi.position, bi.added_at")
     .all(row.id) as { kind: string; cover: string | null; data: string }[];
@@ -651,9 +651,19 @@ function boardView(connection: Db, row: { id: string; name: string; description:
     const colors = colorsOf(member.kind, parse(member.data, {})).map((c) => c.hex);
     if (colors.length) tiles.push({ colors: [...new Set(colors)].slice(0, 6) });
   }
+  const names = [row.name];
+  let parentId = row.parent_id;
+  for (let depth = 0; parentId && depth < 20; depth += 1) {
+    const parent = connection.prepare("SELECT name, parent_id FROM boards WHERE id = ?").get(parentId) as { name: string; parent_id: string | null } | undefined;
+    if (!parent) break;
+    names.unshift(parent.name);
+    parentId = parent.parent_id;
+  }
   return {
     id: row.id,
     name: row.name,
+    path: names.join(" › "),
+    parentId: row.parent_id,
     description: row.description,
     count: members.length,
     tiles,
@@ -667,31 +677,33 @@ function boardView(connection: Db, row: { id: string; name: string; description:
 export function listBoards(userId: string): BoardView[] {
   const connection = db();
   const rows = connection
-    .prepare("SELECT id, name, description, used_at, created_at FROM boards WHERE user_id = ? ORDER BY COALESCE(used_at, created_at) DESC")
-    .all(userId) as { id: string; name: string; description: string; used_at: string | null; created_at: string }[];
+    .prepare("SELECT id, user_id, parent_id, name, description, used_at, created_at FROM boards WHERE user_id = ? ORDER BY COALESCE(used_at, created_at) DESC")
+    .all(userId) as { id: string; user_id: string; parent_id: string | null; name: string; description: string; used_at: string | null; created_at: string }[];
   return rows.map((row) => boardView(connection, row));
 }
 
-export function createBoard(userId: string, input: { name?: unknown; description?: unknown; itemIds?: unknown }): BoardView {
+export function createBoard(userId: string, input: { name?: unknown; description?: unknown; itemIds?: unknown; parentId?: unknown }): BoardView {
   const name = typeof input.name === "string" ? input.name.trim().slice(0, 120) : "";
   if (!name) throw new LibraryError(400, "bad_name", "Nommez le tableau.");
   const connection = db();
   return transaction(connection, () => {
     const id = randomUUID();
     const now = new Date().toISOString();
-    const position = (connection.prepare("SELECT COUNT(*) AS n FROM boards WHERE user_id = ?").get(userId) as { n: number }).n;
+    const parentId = typeof input.parentId === "string" ? input.parentId : null;
+    if (parentId) ownedBoard(connection, userId, parentId);
+    const position = (connection.prepare("SELECT COUNT(*) AS n FROM boards WHERE user_id = ? AND parent_id IS ?").get(userId, parentId) as { n: number }).n;
     connection
-      .prepare("INSERT INTO boards (id, user_id, name, description, position, used_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(id, userId, name, typeof input.description === "string" ? input.description.slice(0, 2000) : "", position, now, now, now);
+      .prepare("INSERT INTO boards (id, user_id, parent_id, name, description, position, used_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, userId, parentId, name, typeof input.description === "string" ? input.description.slice(0, 2000) : "", position, now, now, now);
     const ids = Array.isArray(input.itemIds) ? input.itemIds.filter((v): v is string => typeof v === "string") : [];
     if (ids.length) addToBoardIn(connection, userId, id, ids);
     return boardView(connection, connection.prepare("SELECT * FROM boards WHERE id = ?").get(id) as never);
   });
 }
 
-function ownedBoard(connection: Db, userId: string, boardId: string): { id: string; name: string; description: string; used_at: string | null; created_at: string } {
-  const row = connection.prepare("SELECT id, name, description, used_at, created_at FROM boards WHERE id = ? AND user_id = ?").get(boardId, userId) as
-    | { id: string; name: string; description: string; used_at: string | null; created_at: string }
+function ownedBoard(connection: Db, userId: string, boardId: string): { id: string; user_id: string; parent_id: string | null; name: string; description: string; used_at: string | null; created_at: string } {
+  const row = connection.prepare("SELECT id, user_id, parent_id, name, description, used_at, created_at FROM boards WHERE id = ? AND user_id = ?").get(boardId, userId) as
+    | { id: string; user_id: string; parent_id: string | null; name: string; description: string; used_at: string | null; created_at: string }
     | undefined;
   if (!row) throw new LibraryError(404, "no_board", "Tableau introuvable.");
   return row;

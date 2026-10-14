@@ -150,7 +150,7 @@ export function buildLibrary(library: string, query: URLSearchParams): HTMLEleme
         if (board) return setParam("board", null);
         const boards = await app.loadBoards();
         const sheet = openSheet({ title: "Tableau", body: [h("div", { class: "picker" }, boards.map((b) => {
-          const button = h("button", { type: "button", class: "btn", text: `${b.name} · ${b.count}` });
+          const button = h("button", { type: "button", class: "btn", text: `${b.path} · ${b.count}` });
           button.addEventListener("click", () => {
             sheet.close();
             setParam("board", b.id);
@@ -161,6 +161,10 @@ export function buildLibrary(library: string, query: URLSearchParams): HTMLEleme
     );
     const theme = params.get("theme");
     row.append(chip(theme === "light" ? "Clair" : theme === "dark" ? "Sombre" : "Clair / sombre", Boolean(theme), () => setParam("theme", theme === "light" ? "dark" : theme === "dark" ? null : "light")));
+    if (tab === "ambiances") {
+      const moodboard = params.get("view") === "moodboard";
+      row.append(chip("Moodboard images", moodboard, () => setParam("view", moodboard ? null : "moodboard"), [icon("squares", 14)]));
+    }
     if (tab === "typos") {
       for (const [value, label] of TYPE_CLASSES) row.append(chip(label, params.get("typeClass") === value, () => setParam("typeClass", params.get("typeClass") === value ? null : value)));
     }
@@ -246,8 +250,11 @@ export function buildLibrary(library: string, query: URLSearchParams): HTMLEleme
       renderTabs(data);
       renderFilters(data);
       status.textContent = [stale ? "hors ligne · cache" : "", data.mode === "any" ? "aucun élément ne porte tous les mots : résultats pour l'un d'eux" : ""].filter(Boolean).join(" · ");
+      const moodboard = tab === "ambiances" && params.get("view") === "moodboard";
+      const items = moodboard ? data.items.filter((item) => item.subkind === "image-original" || item.subkind === "image-derivative") : data.items;
+      list.classList.toggle("moodboard", moodboard);
       list.replaceChildren(
-        ...data.items.map((item) => {
+        ...items.map((item) => {
           const row = rowFor(item, {
             selecting,
             selected: selection.has(item.id),
@@ -264,9 +271,9 @@ export function buildLibrary(library: string, query: URLSearchParams): HTMLEleme
           return row;
         }),
       );
-      if (!data.items.length) list.replaceChildren(h("div", { class: "empty" }, [h("h2", { text: q.get("q") || data.counts.total ? "Rien ne correspond" : `Aucune ${tab === "typos" ? "typographie" : LIBRARY_LABEL[tab as Library].toLowerCase().replace(/s$/, "")} gardée` }), h("p", { text: q.get("q") || data.counts.total ? "Essayez un autre mot, ou retirez un filtre." : "Ouvrez une capture et touchez Garder sur ce qui vous plaît." })]));
+      if (!items.length) list.replaceChildren(h("div", { class: "empty" }, [h("h2", { text: moodboard ? "Aucune image conservée" : q.get("q") || data.counts.total ? "Rien ne correspond" : `Aucune ${tab === "typos" ? "typographie" : LIBRARY_LABEL[tab as Library].toLowerCase().replace(/s$/, "")} gardée` }), h("p", { text: moodboard ? "Ouvrez directement une URL d'image pour démarrer ce moodboard." : q.get("q") || data.counts.total ? "Essayez un autre mot, ou retirez un filtre." : "Ouvrez une capture et touchez Garder sur ce qui vous plaît." })]));
       if (!phone()) {
-        const pick = data.items.find((i) => i.id === selectedId) ?? data.items[0];
+        const pick = items.find((i) => i.id === selectedId) ?? items[0];
         if (pick) {
           selectedId = pick.id;
           list.querySelector(`[data-id="${pick.id}"]`)?.setAttribute("aria-current", "true");
@@ -299,7 +306,7 @@ async function renderBoards(list: HTMLElement, status: HTMLElement): Promise<voi
   try {
     const { data, stale } = await get<{ boards: Board[] }>("/api/boards");
     status.textContent = stale ? "hors ligne · cache" : "";
-    const grid = h("div", { class: "board-grid" }, data.boards.map((board) => h("a", { class: "board-card", href: `#/tableaux/${board.id}` }, [mosaic(board.tiles), h("div", { class: "row-meta" }, [h("b", { text: board.name }), h("span", { class: "val", text: `${board.count} élément${board.count > 1 ? "s" : ""}` })])])));
+    const grid = h("div", { class: "board-grid" }, data.boards.map((board) => h("a", { class: "board-card", href: `#/tableaux/${board.id}` }, [mosaic(board.tiles), h("div", { class: "row-meta" }, [h("b", { text: board.path }), h("span", { class: "val", text: `${board.count} élément${board.count > 1 ? "s" : ""}` })])])));
     list.replaceChildren(h("div", { class: "capture-form" }, [name, create]), grid);
     if (!data.boards.length) grid.append(h("p", { class: "muted", text: "Aucun tableau. Un tableau mélange palettes, typos, composants et ambiances de plusieurs sites." }));
   } catch (error) {
@@ -326,9 +333,117 @@ async function renderDetail(host: HTMLElement, itemId: string, standalone: boole
   try {
     const { data, stale } = await get<{ item: Item }>(`/api/items/${itemId}`);
     host.replaceChildren(...fiche(data.item, { standalone, stale, onChanged }));
+    const image = data.item.data as ImageReferenceData;
+    if (image.tagAnalysis?.status === "pending" || image.generation?.status === "pending") {
+      window.setTimeout(() => {
+        if (host.isConnected) void renderDetail(host, itemId, standalone, onChanged);
+      }, 1200);
+    }
   } catch (error) {
     host.replaceChildren(h("p", { class: "error-text", text: error instanceof Error ? error.message : "Fiche indisponible." }));
   }
+}
+
+type ImageCandidate = { tag: string; probability: number; status: "suggested" | "accepted" | "rejected" | "edited"; evidence: string; editedTag?: string };
+type ImageReferenceData = {
+  width?: number;
+  height?: number;
+  mime?: string;
+  contentHash?: string;
+  tagAnalysis?: {
+    status: "pending" | "ready" | "unavailable" | "failed";
+    vision: { model: string; version: string; evidence: string } | null;
+    jev: { model: string; version: string } | null;
+    candidates: ImageCandidate[];
+    error?: string;
+  };
+  generation?: { parentId: string; prompt: string; model: string; version: string; status: "pending" | "failed" | "complete"; attempts: number; error?: string };
+};
+
+function imageReferenceControls(item: Item, options: { stale: boolean; onChanged(): void }): HTMLElement {
+  const root = h("section", { class: "image-reference-controls" });
+  const paint = () => {
+    const data = item.data as ImageReferenceData;
+    const parts: Node[] = [];
+    if (options.stale || !app.online()) {
+      parts.push(h("p", { class: "offline is-live", text: "Les tags et la génération demandent le serveur. Les métadonnées et l'image en cache restent lisibles." }));
+    }
+    if (data.tagAnalysis) {
+      const analysis = data.tagAnalysis;
+      const heading = h("div", { class: "finding-head" }, [h("h3", { text: "Tags sémantiques" }), h("span", { class: "val muted", text: analysis.status === "pending" ? "analyse en cours" : analysis.status === "unavailable" ? "modèles non configurés" : analysis.status === "failed" ? "analyse en échec" : "à valider" })]);
+      const tagList = h("div", { class: "image-tag-list" });
+      for (const candidate of analysis.candidates) {
+        const accept = h("button", { type: "button", class: "btn", text: candidate.status === "accepted" ? "Accepté" : "Accepter" });
+        const reject = h("button", { type: "button", class: "btn", text: candidate.status === "rejected" ? "Rejeté" : "Rejeter" });
+        const edit = h("button", { type: "button", class: "btn", text: candidate.status === "edited" ? `Corrigé : ${candidate.editedTag}` : "Corriger" });
+        for (const button of [accept, reject, edit]) button.disabled = options.stale || !app.online();
+        const review = async (status: "accepted" | "rejected" | "edited", editedTag?: string) => {
+          const result = await post<{ item: Item }>(`/api/items/${item.id}/image-tags`, { tag: candidate.tag, status, editedTag });
+          Object.assign(item, result.item);
+          paint();
+          options.onChanged();
+        };
+        accept.addEventListener("click", () => void review("accepted"));
+        reject.addEventListener("click", () => void review("rejected"));
+        edit.addEventListener("click", () => {
+          const input = h("input", { class: "input", value: candidate.editedTag ?? "", placeholder: "Tag corrigé", "aria-label": "Tag corrigé" });
+          const save = h("button", { type: "button", class: "btn primary", text: "Enregistrer" });
+          const sheet = openSheet({ title: "Corriger la suggestion", body: [input], actions: [save] });
+          save.addEventListener("click", () => void review("edited", input.value).then(() => sheet.close()));
+        });
+        tagList.append(h("article", { class: `image-tag ${candidate.status}` }, [
+          h("div", {}, [h("b", { text: candidate.tag }), h("span", { class: "val", text: `${Math.round(candidate.probability * 100)} %` }), h("p", { class: "muted", text: candidate.evidence })]),
+          h("div", { class: "actions" }, [accept, reject, edit]),
+        ]));
+      }
+      parts.push(heading);
+      if (analysis.vision || analysis.jev) parts.push(h("p", { class: "muted", text: `Vision ${analysis.vision?.model ?? "indisponible"} produit les indices textuels. Jev ${analysis.jev?.model ?? "indisponible"} évalue seulement les candidats.` }));
+      if (analysis.error) parts.push(h("p", { class: "error-text", text: analysis.error }));
+      parts.push(tagList);
+    }
+    if (item.subkind === "image-original") {
+      const prompt = h("textarea", { class: "input", rows: "3", placeholder: "Conserver la composition, passer le paysage en hiver.", "aria-label": "Consigne de variation" });
+      const generate = h("button", { type: "button", class: "btn primary", text: "Générer une variation" });
+      generate.disabled = options.stale || !app.online();
+      generate.addEventListener("click", async () => {
+        if (!prompt.value.trim()) return prompt.focus();
+        generate.disabled = true;
+        try {
+          const result = await post<{ item: Item }>(`/api/items/${item.id}/derivatives`, { prompt: prompt.value });
+          app.go(`#/items/${result.item.id}`);
+        } catch (error) {
+          app.toast(error instanceof Error ? error.message : "Génération impossible");
+          generate.disabled = false;
+        }
+      });
+      parts.push(h("div", { class: "generation-box" }, [h("h3", { text: "Variation générée" }), prompt, generate]));
+    } else if (data.generation) {
+      const generation = data.generation;
+      const status = generation.status === "complete" ? "terminée" : generation.status === "failed" ? "en échec" : "en cours";
+      const details = h("div", { class: "generation-box" }, [
+        h("h3", { text: "Média généré" }),
+        h("p", { text: generation.prompt }),
+        h("p", { class: "muted", text: `${generation.model}${generation.version ? `, version ${generation.version}` : ""} · ${status} · essai ${generation.attempts}` }),
+        h("a", { class: "source-link", href: `#/items/${generation.parentId}`, text: "Ouvrir l'original immuable" }),
+      ]);
+      if (generation.error) details.append(h("p", { class: "error-text", text: generation.error }));
+      if (generation.status === "failed") {
+        const retry = h("button", { type: "button", class: "btn primary", text: "Réessayer" });
+        retry.disabled = options.stale || !app.online();
+        retry.addEventListener("click", async () => {
+          const result = await post<{ item: Item }>(`/api/items/${item.id}/derivatives/retry`);
+          Object.assign(item, result.item);
+          paint();
+        });
+        details.append(retry);
+      }
+      parts.push(details);
+    }
+    if (data.width && data.height) parts.push(h("p", { class: "val muted", text: `${data.width} × ${data.height} px · ${data.mime ?? "format inconnu"} · empreinte ${data.contentHash?.slice(0, 12) ?? "indisponible"}` }));
+    root.replaceChildren(...parts);
+  };
+  paint();
+  return root;
 }
 
 function fiche(item: Item, options: { standalone: boolean; stale: boolean; onChanged(): void }): Node[] {
@@ -337,6 +452,7 @@ function fiche(item: Item, options: { standalone: boolean; stale: boolean; onCha
   if (options.stale) out.push(h("p", { class: "offline is-live", text: "Hors ligne · cache. Modifications désactivées." }));
   out.push(h("div", { class: "finding-head" }, [h("h2", { text: item.title }), confidenceDot(item.confidence, provenance.finding?.evidence ?? [])]));
   out.push(itemPreview(item, "detail"));
+  if (item.subkind === "image-original" || item.subkind === "image-derivative") out.push(imageReferenceControls(item, options));
 
   // Why: the most valuable field, editable in place.
   const why = h("textarea", { id: `why-${item.id}`, rows: String(Math.min(8, Math.max(2, Math.ceil(item.why.length / 38)))), placeholder: "Sans raison. Dites pourquoi vous le gardez." });
@@ -494,10 +610,24 @@ export function buildBoard(boardId: string): HTMLElement {
     try {
       const { data, stale } = await get<{ board: Board & { items: Item[] } }>(`/api/boards/${boardId}`);
       const board = data.board;
+      await app.loadBoards();
       const back = h("a", { class: "btn square", href: "#/bibliotheque/tableaux", "aria-label": "Tous les tableaux" }, [icon("caret-left", 20)]);
       const rename = h("button", { type: "button", class: "btn", text: "Renommer" });
       const remove = h("button", { type: "button", class: "btn square danger", "aria-label": "Supprimer le tableau" }, [icon("trash", 18)]);
       const exp = h("a", { class: "btn", href: `#/exports?board=${board.id}` }, [icon("export", 18), h("span", { class: "hide-phone", text: "Exporter" })]);
+      const createChild = h("button", { type: "button", class: "btn", text: "Nouveau sous-tableau" });
+      createChild.disabled = stale || !app.online();
+      createChild.addEventListener("click", () => {
+        const input = h("input", { class: "input", placeholder: "Nom du sous-tableau", "aria-label": "Nom du sous-tableau" });
+        const save = h("button", { type: "button", class: "btn primary", text: "Créer" });
+        const sheet = openSheet({ title: `Sous-tableau de ${board.name}`, body: [input], actions: [save] });
+        save.addEventListener("click", async () => {
+          if (!input.value.trim()) return input.focus();
+          const created = await post<{ board: Board }>("/api/boards", { name: input.value, parentId: board.id });
+          sheet.close();
+          app.go(`#/tableaux/${created.board.id}`);
+        });
+      });
       rename.addEventListener("click", () => {
         const input = h("input", { class: "input", value: board.name, "aria-label": "Nom du tableau" });
         const save = h("button", { type: "button", class: "btn primary", text: "Enregistrer" });
@@ -519,10 +649,13 @@ export function buildBoard(boardId: string): HTMLElement {
         const row = rowFor(item, { selecting: false, selected: false, current: false, onOpen: () => app.go(`#/items/${item.id}`), onToggle: () => {} });
         return row;
       }));
+      const children = app.boards.filter((candidate) => candidate.parentId === board.id);
+      const childGrid = h("div", { class: "board-grid" }, children.map((child) => h("a", { class: "board-card", href: `#/tableaux/${child.id}` }, [mosaic(child.tiles), h("b", { text: child.name }), h("span", { class: "val", text: `${child.count} élément${child.count > 1 ? "s" : ""}` })])));
       root.replaceChildren(
-        h("header", { class: "head" }, [back, h("div", { class: "head-text" }, [h("h1", { text: board.name }), h("span", { class: "val", text: `${board.count} élément${board.count > 1 ? "s" : ""}${kinds ? ` · ${kinds}` : ""}${stale ? " · hors ligne · cache" : ""}` })]), exp, rename, remove]),
+        h("header", { class: "head" }, [back, h("div", { class: "head-text" }, [h("h1", { text: board.path }), h("span", { class: "val", text: `${board.count} élément${board.count > 1 ? "s" : ""}${kinds ? ` · ${kinds}` : ""}${stale ? " · hors ligne · cache" : ""}` })]), exp, createChild, rename, remove]),
         h("div", { class: "scroll" }, [
           board.items.length ? h("div", { style: "max-width:420px" }, [mosaic(board.tiles)]) : h("span"),
+          ...(children.length ? [h("section", { class: "field" }, [h("h2", { text: "Sous-tableaux" }), childGrid])] : []),
           grid,
           ...(board.items.length ? [] : [h("div", { class: "empty" }, [h("h2", { text: "Tableau vide" }), h("p", { text: "Dans une fiche, « Ranger » ; dans la bibliothèque, sélectionnez plusieurs éléments puis « Ajouter au tableau »." })])]),
         ]),

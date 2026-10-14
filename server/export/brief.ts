@@ -58,6 +58,8 @@ export function whatToTake(item: ItemView): string {
       if (item.subkind === "radius") return `les rayons : ${String(d.rule ?? d.system ?? "")}`;
       return "les ombres";
     case "mood":
+      if (item.subkind === "image-original") return "l'image de référence originale, ses palettes et ses tags validés";
+      if (item.subkind === "image-derivative") return "la variation générée, reliée à son original et à sa consigne";
       return `l'ambiance : ${list(d.descriptors).map((x) => `${String(x.name).toLowerCase()} ${String(x.word)}`).join(", ")}`;
     case "page":
       return "la page comme ensemble (structure, rythme), jamais sa mise en page exacte";

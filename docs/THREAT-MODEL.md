@@ -48,6 +48,13 @@ deployment control, not an application one, and it is not enabled by default.
 fixture on `127.0.0.1` while developing the pipeline. In a deployment it turns
 the endpoint into an internal-network scanner.
 
+Direct image ingestion uses the same URL guard on the first URL and every
+redirect. The selected DNS address is pinned into the native HTTP request,
+including TLS SNI for the original hostname. A redirect is never followed
+before its new URL and all DNS answers pass the guard. Image detection trusts
+neither a file suffix nor a header alone: the response MIME must be allowlisted
+and libvips must decode the announced format.
+
 ## 2 · Rendering someone else's page
 
 No captured HTML is ever returned to the client or inserted into the DOM. The
@@ -76,6 +83,11 @@ A hostile page can be infinite, enormous, or both.
 - One browser at a time by default (`DRD_CAPTURE_CONCURRENCY`), one browser
   per capture so a crash cannot poison the next one.
 - Per-account rate limit (`DRD_CAPTURE_PER_USER_PER_HOUR`).
+- Direct images have separate compressed byte, decoded pixel, dimension and
+  request timeout caps. HTTP content encoding is refused, size is checked from
+  `Content-Length` and while streaming, and libvips receives the decoded pixel
+  cap before persistence. This contains oversized files and decompression
+  bombs.
 
 ## 4 · Accounts and multi-tenancy
 
@@ -103,19 +115,29 @@ accepted: nothing about them can be forged through a victim's browser.
 
 ## 5 · What is stored, and what leaves
 
-Stored: accounts, sessions, collections, references with their annotations,
-captures with screenshots and element crops, outbound links, discovery
-candidates, export packs. All of it in `DRD_DATA_DIR` — one SQLite file and
-one media directory. Nothing is sent anywhere else.
+Stored: accounts, sessions, boards, references with their annotations,
+captures with screenshots and element crops, original image bytes, generated
+derivatives, outbound links, discovery candidates and export packs. All of it
+is in `DRD_DATA_DIR`, one SQLite file and one media directory.
 
-No telemetry, no third-party request, no remote font. The optional LLM adapter
-is the single outbound integration and it is off unless three environment
-variables are set; export packs never touch it.
+An ingested image is an immutable, content-addressed private research copy.
+Its direct source URL, optional originating page, content hash and capture date
+remain visible. A generated derivative is a separate item with its parent,
+prompt, model and version. Packs label originals, generated derivatives and
+page extracts separately. DRD does not claim ownership or permission to
+republish any captured material.
 
-Copyright is a real exposure the software cannot solve: screenshots and crops
-of other people's sites are stored, and export packs contain them. They are
-reference material for private use, and every pack says so in its README. Do
-not publish a pack.
+No telemetry, remote font or analytics runs. When configured, the vision model
+receives original image bytes and returns bounded textual evidence. Jev sees
+only that text and a controlled taxonomy, never the image. The image generation
+endpoint receives the original bytes and the user's prompt. These integrations
+are off unless their environment variables are set. Export packs never call a
+model or the network.
+
+Copyright and confidentiality are exposures the software cannot solve. Image
+references and page captures are private research material. Do not publish a
+pack or configure a model endpoint whose retention policy is unsuitable for
+the source material.
 
 ## 6 · Deployment checklist
 

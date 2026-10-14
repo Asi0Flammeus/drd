@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atelier Sarcelle · fixture claire à empattements</title>
+<meta name="description" content="Page de test locale de DRD : fond clair, titres à empattements, un accent sarcelle, du contenu révélé au défilement.">
+<meta name="theme-color" content="#1f6f73">
+<style>
+  :root {
+    --fond: #f7f4ec;
+    --surface: #ffffff;
+    --texte: #22211f;
+    --texte-2: #5b5750;
+    --sarcelle: #1f6f73;
+    --sable: #c9b48c;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--fond); color: var(--texte); font: 400 17px/1.6 "DejaVu Sans", Verdana, sans-serif; }
+  h1, h2, h3 { font-family: "DejaVu Serif", Georgia, serif; font-weight: 700; color: var(--sarcelle); margin: 0 0 16px; }
+  h1 { font-size: 53.7px; line-height: 1.1; }
+  h2 { font-size: 40.3px; line-height: 1.2; }
+  h3 { font-size: 22.7px; line-height: 1.3; }
+  p { margin: 0 0 16px; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid #e3ded2; }
+  nav { max-width: 1040px; margin: 0 auto; display: flex; gap: 32px; align-items: center; padding: 16px 24px; }
+  nav .logo { font-family: "DejaVu Serif", Georgia, serif; font-size: 22.7px; color: var(--sarcelle); margin-right: auto; }
+  nav a { color: var(--texte); text-decoration: none; font-size: 15px; }
+  .hero { min-height: 560px; display: grid; place-items: center; text-align: center; padding: 96px 24px; background: var(--surface); }
+  .hero p { color: var(--texte-2); font-size: 22.7px; max-width: 36ch; margin: 0 auto 32px; }
+  .btn { display: inline-block; padding: 14px 32px; border-radius: 999px; background: var(--sarcelle); color: #ffffff; text-decoration: none; font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; transition: background-color 200ms ease-out; }
+  .btn:hover { background: #164f52; }
+  .btn.sable { background: var(--sable); color: #ffffff; }
+  .btn.ghost { background: transparent; color: var(--sarcelle); border: 1px solid var(--sarcelle); }
+  section { max-width: 1040px; margin: 0 auto; padding: 96px 24px; }
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity 600ms ease-out, transform 600ms ease-out; }
+  .reveal.in { opacity: 1; transform: none; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .card { background: var(--surface); border-radius: 12px; padding: 32px; box-shadow: 0 8px 24px rgba(34, 33, 31, 0.08); }
+  .card p { color: var(--texte-2); font-size: 15px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+  .split img { width: 100%; height: 360px; object-fit: cover; border-radius: 2px; display: block; }
+  form { display: flex; gap: 16px; }
+  input { flex: 1; padding: 14px 16px; border: 1px solid #b9b2a3; border-radius: 8px; font: inherit; background: var(--surface); color: var(--texte); }
+  footer { background: var(--sarcelle); color: #ffffff; padding: 64px 24px; }
+  footer div { max-width: 1040px; margin: 0 auto; display: flex; justify-content: space-between; font-size: 15px; }
+  footer a { color: #ffffff; }
+</style>
+</head>
+<body>
+<header><nav aria-label="Principale"><span class="logo">Atelier Sarcelle</span><a href="#soins">Soins</a><a href="#maison">La maison</a><a href="#contact">Contact</a><a class="btn ghost" href="#contact">Réserver</a></nav></header>
+<main>
+  <div class="hero">
+    <div>
+      <h1>Atelier Sarcelle</h1>
+      <p>Des soins lents, un lieu calme, une seule couleur pour le dire.</p>
+      <a class="btn" href="#soins">Découvrir les soins</a>
+    </div>
+  </div>
+  <section id="soins" class="reveal">
+    <h2>Nos soins</h2>
+    <p>Chaque soin tient en une heure et en une intention. Rien de plus.</p>
+    <div class="cards">
+      <article class="card"><h3>Soin du cuir chevelu</h3><p>Un massage lent, des huiles choisies, une eau tiède et du silence.</p></article>
+      <article class="card"><h3>Rituel visage</h3><p>Nettoyer, masser, laisser reposer : la peau fait le reste du travail.</p></article>
+      <article class="card"><h3>Coiffure douce</h3><p>Une coupe pensée pour durer, sans chaleur et sans produit inutile.</p></article>
+    </div>
+  </section>
+  <section id="maison" class="reveal">
+    <div class="split">
+      <img src="photo.jpg" alt="La salle de soin">
+      <div>
+        <h2>La maison</h2>
+        <p>Une pièce claire, du bois, du lin, et une fenêtre sur la cour. On y entre par une porte bleue.</p>
+        <a class="btn sable" href="#contact">Explorer la maison</a>
+      </div>
+    </div>
+  </section>
+  <section id="contact" class="reveal">
+    <h2>Écrire à l'atelier</h2>
+    <p>Une adresse suffit, la réponse arrive dans la journée.</p>
+    <form onsubmit="return false"><input type="email" aria-label="Adresse e-mail" placeholder="vous@exemple.fr"><button class="btn" type="submit">Envoyer</button></form>
+  </section>
+</main>
+<footer><div><span>Atelier Sarcelle · 12 rue de la Cour</span><a href="#top">Retour en haut</a></div></footer>
+<script>
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) if (entry.isIntersecting) entry.target.classList.add("in");
+  }, { threshold: 0.2 });
+  for (const node of document.querySelectorAll(".reveal")) observer.observe(node);
+</script>
+</body>
+</html>

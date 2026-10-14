@@ -3,279 +3,929 @@
  * ours. Plain JavaScript on purpose: it is evaluated as a string by the
  * capture runner, never bundled, and it must not depend on a build step.
  *
- * It returns geometry and computed style only. No captured HTML ever comes
- * back — the client renders screenshots and text extracts, never markup from
- * a page we do not control.
+ * It returns geometry, computed style and measured colour only. No captured
+ * HTML ever comes back: the client renders screenshots, crops and short text
+ * samples, never markup from a page we do not control.
  *
- * The expression value of this file is the payload, so the file is one IIFE.
+ * The file is one function `(mode, arg) => result`; the runner calls it once
+ * per stage. Elements the later stages need again (components, text-style
+ * representatives, fixed layers) are tagged with `data-drd-*` attributes
+ * during the DOM pass, so every later call finds the same nodes.
  */
-(() => {
-  const LIMIT_ELEMENTS = 400;
-  const LIMIT_LINKS = 300;
-  const MIN_AREA = 5000;
-  const MIN_WIDTH = 72;
-  const MIN_HEIGHT = 32;
+((mode, arg) => {
+  const W = window;
+  const doc = document;
+  const root = doc.documentElement;
+  const vw = W.innerWidth;
+  const vh = W.innerHeight;
+  const scrollY = W.scrollY;
+  const scrollX = W.scrollX;
+  const pageWidth = Math.max(root.scrollWidth, vw);
+  const pageHeight = Math.max(root.scrollHeight, doc.body ? doc.body.scrollHeight : 0, vh);
 
-  const scrollX = window.scrollX;
-  const scrollY = window.scrollY;
-  const pageWidth = Math.max(document.documentElement.scrollWidth, window.innerWidth);
-  const pageHeight = Math.max(document.documentElement.scrollHeight, window.innerHeight);
+  /* ------------------------------------------------------------ colour ---- */
 
-  const text = (el) => (el.textContent || "").replace(/\s+/g, " ").trim();
+  const parsed = new Map();
+  let ctx2d = null;
 
-  /** A path a human can read and a developer can paste into the console. */
-  function selectorFor(el) {
-    const parts = [];
-    let node = el;
-    let depth = 0;
-    while (node && node.nodeType === 1 && node !== document.documentElement && depth < 6) {
-      let part = node.tagName.toLowerCase();
-      if (node.id && /^[A-Za-z][\w-]*$/.test(node.id)) {
-        parts.unshift(`#${node.id}`);
-        break;
+  /** Any computed colour string to [r, g, b, a] in sRGB, or null when invisible. */
+  function rgba(value) {
+    if (!value || value === "transparent" || value === "none" || value === "currentcolor") return null;
+    const hit = parsed.get(value);
+    if (hit !== undefined) return hit;
+    let out = null;
+    const m = /^rgba?\(([^)]+)\)$/.exec(value);
+    if (m) {
+      const parts = m[1].split(/[\s,/]+/).filter(Boolean);
+      const n = parts.map((p) => (p.endsWith("%") ? (parseFloat(p) / 100) * (parts.indexOf(p) < 3 ? 255 : 1) : parseFloat(p)));
+      if (n.length >= 3 && n.every((x) => Number.isFinite(x))) out = [n[0], n[1], n[2], n.length > 3 ? n[3] : 1];
+    } else {
+      // oklch(), lab(), color(display-p3 …): let the canvas convert, it
+      // gamut-maps exactly the way the page itself was painted.
+      if (!ctx2d) {
+        const canvas = doc.createElement("canvas");
+        canvas.width = 1;
+        canvas.height = 1;
+        ctx2d = canvas.getContext("2d", { willReadFrequently: true });
       }
-      const parent = node.parentElement;
-      if (parent) {
-        const sameTag = Array.prototype.filter.call(parent.children, (c) => c.tagName === node.tagName);
-        if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(node) + 1})`;
-      }
-      parts.unshift(part);
-      node = node.parentElement;
-      depth += 1;
+      ctx2d.clearRect(0, 0, 1, 1);
+      ctx2d.fillStyle = "#000";
+      ctx2d.fillStyle = value;
+      ctx2d.fillRect(0, 0, 1, 1);
+      const d = ctx2d.getImageData(0, 0, 1, 1).data;
+      out = [d[0], d[1], d[2], d[3] / 255];
     }
-    return parts.join(" > ");
+    if (out && out[3] < 0.02) out = null;
+    parsed.set(value, out);
+    return out;
   }
 
-  function toHex(value) {
-    if (!value) return null;
-    const match = value.match(/rgba?\(([^)]+)\)/);
-    if (!match) return null;
-    const parts = match[1].split(/[,\s/]+/).filter(Boolean).map(Number);
-    if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return null;
-    const alpha = parts.length > 3 ? parts[3] : 1;
-    if (alpha < 0.08) return null;
-    const hex = parts
-      .slice(0, 3)
-      .map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0"))
-      .join("");
-    return `#${hex}`;
-  }
+  const over = (top, bottom) => {
+    const a = top[3];
+    return [top[0] * a + bottom[0] * (1 - a), top[1] * a + bottom[1] * (1 - a), top[2] * a + bottom[2] * (1 - a), 1];
+  };
+  const key = (c) => `${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])}`;
+  const WHITE = [255, 255, 255, 1];
+  const COLOR_TOKEN = /(rgba?\([^)]*\)|oklch\([^)]*\)|oklab\([^)]*\)|lab\([^)]*\)|lch\([^)]*\)|color\([^)]*\)|hsla?\([^)]*\))/gi;
 
-  const CREDIT = /(site|website|design(ed)?|built|made|developed|crafted|réalis|conçu|développé|created)\s+(by|par)|^(by|par)\s|credits?|colophon/i;
-  const BUTTONISH = /(^|[\s_-])(btn|button|cta|bouton)([\s_-]|$)/i;
-
-  /* ------------------------------------------------------------ meta ----- */
-
-  const metaContent = (selector) => {
-    const node = document.querySelector(selector);
-    return node ? (node.getAttribute("content") || "").trim() : "";
+  const styles = new Map();
+  const css = (el) => {
+    let s = styles.get(el);
+    if (!s) {
+      s = W.getComputedStyle(el);
+      styles.set(el, s);
+    }
+    return s;
   };
 
-  const iconLink = document.querySelector('link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]');
-  const canonical = document.querySelector('link[rel="canonical"]');
+  /**
+   * What is painted behind an element: its own and its ancestors' background
+   * layers composited down to the first opaque one (the canvas is white).
+   * `image` is true when a background image or media sits in that stack, so
+   * the colour is not the whole story.
+   */
+  const backdrops = new Map();
+  function backdrop(el) {
+    const cached = backdrops.get(el);
+    if (cached) return cached;
+    const layers = [];
+    let image = false;
+    let gradient = null;
+    let node = el;
+    while (node && node.nodeType === 1) {
+      const s = css(node);
+      const tag = node.tagName;
+      if (tag === "IMG" || tag === "VIDEO" || tag === "CANVAS" || tag === "PICTURE") image = true;
+      const bi = s.backgroundImage;
+      if (bi && bi !== "none") {
+        if (bi.indexOf("url(") >= 0) image = true;
+        else if (!gradient && bi.indexOf("gradient(") >= 0) {
+          const first = (bi.match(COLOR_TOKEN) || [])[0];
+          const c = first ? rgba(first) : null;
+          if (c) gradient = [c[0], c[1], c[2], 1];
+        }
+      }
+      const bg = rgba(s.backgroundColor);
+      if (bg) {
+        layers.push(bg);
+        if (bg[3] >= 0.99) break;
+      }
+      if (gradient && !bg) {
+        layers.push(gradient);
+        break;
+      }
+      node = node.parentElement;
+    }
+    let color = WHITE;
+    for (let i = layers.length - 1; i >= 0; i -= 1) color = over(layers[i], color);
+    const result = { color, image };
+    backdrops.set(el, result);
+    return result;
+  }
 
+  /** What is painted at a viewport point: every layer of the hit-test stack, top down, to the first opaque one. */
+  function backdropAt(x, y) {
+    const layers = [];
+    let image = false;
+    // Once fixed layers are hidden for the tile pass, a fixed background
+    // layer that stays painted is not what lies behind the content either:
+    // the grid reads the page as it did when every fixed layer was hidden.
+    const hidden = Boolean(doc.getElementById("drd-hide-fixed"));
+    for (const el of doc.elementsFromPoint(x, y)) {
+      if (hidden && el.closest("[data-drd-f]")) continue;
+      const tag = el.tagName;
+      if (tag === "IMG" || tag === "VIDEO" || tag === "CANVAS" || tag === "PICTURE" || tag === "IFRAME") {
+        image = true;
+        break;
+      }
+      if (tag === "svg" || tag === "SVG") {
+        const r = el.getBoundingClientRect();
+        if (r.width * r.height > 14400) {
+          image = true;
+          break;
+        }
+      }
+      if (el instanceof SVGElement) continue;
+      const s = css(el);
+      if (opacity(el) < 0.05) continue;
+      const bi = s.backgroundImage;
+      const own = rgba(s.backgroundColor);
+      // A layer faded with `opacity` lets what is below show through.
+      const fade = opacity(el);
+      const bg = own ? [own[0], own[1], own[2], own[3] * fade] : null;
+      if (bg) layers.push(bg);
+      if (bg && bg[3] >= 0.99) break;
+      if (bi && bi !== "none") {
+        if (bi.indexOf("url(") >= 0) {
+          image = true;
+          break;
+        }
+        const first = (bi.match(COLOR_TOKEN) || [])[0];
+        const c = first ? rgba(first) : null;
+        if (c) {
+          layers.push([c[0], c[1], c[2], 1]);
+          break;
+        }
+      }
+    }
+    let color = WHITE;
+    for (let i = layers.length - 1; i >= 0; i -= 1) color = over(layers[i], color);
+    return { color, image };
+  }
+
+  const opacities = new Map();
+  function opacity(el) {
+    if (!el || el.nodeType !== 1) return 1;
+    const hit = opacities.get(el);
+    if (hit !== undefined) return hit;
+    const value = Number(css(el).opacity) * opacity(el.parentElement);
+    opacities.set(el, value);
+    return value;
+  }
+
+  function visible(el, rect) {
+    if (!rect || rect.width < 1 || rect.height < 1) return false;
+    if (typeof el.checkVisibility === "function" && !el.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
+    return opacity(el) >= 0.1;
+  }
+
+  const pageBox = (r) => ({ x: Math.round(r.left + scrollX), y: Math.round(r.top + scrollY), width: Math.round(r.width), height: Math.round(r.height) });
+  const viewBox = (r) => ({ x: r.left, y: r.top, width: r.width, height: r.height });
+  const px = (v) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const clean = (t) => (t || "").replace(/\s+/g, " ").trim();
+
+  /* ------------------------------------------------------------- modes ---- */
+
+  if (mode === "scrollTo") {
+    root.style.setProperty("scroll-behavior", "auto", "important");
+    if (doc.body) doc.body.style.setProperty("scroll-behavior", "auto", "important");
+    W.scrollTo({ top: arg, left: 0, behavior: "instant" });
+    return { y: W.scrollY, height: pageHeight, viewport: vh };
+  }
+
+  if (mode === "metrics") {
+    return { width: pageWidth, height: pageHeight, viewportWidth: vw, viewportHeight: vh, y: scrollY };
+  }
+
+  if (mode === "hideFixed" || mode === "showFixed") {
+    let style = doc.getElementById("drd-hide-fixed");
+    if (mode === "hideFixed" && !style) {
+      style = doc.createElement("style");
+      style.id = "drd-hide-fixed";
+      // A fixed canvas, video or frame is a background painted behind every
+      // screen, so it stays. Hidden, nematis' 3D canvas replayed the hidden
+      // time when shown again: a main-thread stall of 3 to 4 times the time
+      // hidden, 40-60 s after a tile pass (measured, 30/09).
+      style.textContent = "[data-drd-f]:not(canvas):not(video):not(iframe){visibility:hidden!important}";
+      (doc.head || root).appendChild(style);
+    }
+    if (mode === "showFixed" && style) style.remove();
+    return true;
+  }
+
+  if (mode === "inview") {
+    // Components and text-style representatives fully inside the viewport,
+    // and settled: a reveal animation that is still fading would crop grey.
+    const out = [];
+    const hidden = Boolean(doc.getElementById("drd-hide-fixed"));
+    for (const el of doc.querySelectorAll("[data-drd-c],[data-drd-t]")) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      if (hidden && el.closest("[data-drd-f]")) continue;
+      if (r.top < 0 || r.left < 0 || r.bottom > vh || r.right > vw) continue;
+      const settled = opacity(el) >= 0.98;
+      if (el.hasAttribute("data-drd-c")) out.push({ kind: "c", id: Number(el.getAttribute("data-drd-c")), box: viewBox(r), settled });
+      if (el.hasAttribute("data-drd-t")) out.push({ kind: "t", id: Number(el.getAttribute("data-drd-t")), box: viewBox(r), settled });
+    }
+    return out;
+  }
+
+  if (mode === "sample") {
+    // Which colour is painted at every point of a 24 px grid: that is area,
+    // the thing an element count can never measure. The whole hit-test stack
+    // is read, not the ancestors: site builders paint section backgrounds on
+    // a sibling layer behind the content, which no ancestor walk ever sees.
+    const step = arg.step || 24;
+    const from = arg.from || 0;
+    const unlock = doc.createElement("style");
+    unlock.textContent = "*,*::before,*::after{pointer-events:auto!important}";
+    (doc.head || root).appendChild(unlock);
+    const bg = {};
+    let img = 0;
+    let total = 0;
+    try {
+      for (let y = step / 2; y < vh; y += step) {
+        const py = scrollY + y;
+        if (py < from || py >= pageHeight) continue;
+        for (let x = step / 2; x < vw; x += step) {
+          total += 1;
+          const b = backdropAt(x, y);
+          if (b.image) {
+            img += 1;
+            continue;
+          }
+          const k = key(b.color);
+          bg[k] = (bg[k] || 0) + 1;
+        }
+      }
+      // Text runs whose centre is on this screen: the colour really behind them.
+      const at = {};
+      for (const [index, cx, cy] of arg.points || []) {
+        const vy = cy - scrollY;
+        if (vy < 0 || vy >= vh || cx < 0 || cx >= vw) continue;
+        const b = backdropAt(cx, vy);
+        at[index] = [b.image ? null : key(b.color), b.image];
+      }
+      return { bg, img, total, at };
+    } finally {
+      unlock.remove();
+    }
+  }
+
+  if (mode === "hoverStyle") {
+    const el = doc.querySelector(`[data-drd-c="${Number(arg)}"]`);
+    if (!el) return null;
+    const s = W.getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    const bgc = rgba(s.backgroundColor);
+    const fg = rgba(s.color);
+    const bc = rgba(s.borderTopColor);
+    return {
+      background: bgc ? key(backdrop(el).color) : null,
+      color: fg ? key(over(fg, backdrop(el).color)) : null,
+      borderColor: bc && px(s.borderTopWidth) > 0 ? key(over(bc, backdrop(el).color)) : null,
+      boxShadow: s.boxShadow,
+      transform: s.transform,
+      textDecoration: s.textDecorationLine,
+      opacity: s.opacity,
+      box: viewBox(r),
+    };
+  }
+
+  if (mode === "specimen") {
+    // One row per family × weight, stacked in a single fixed column so the
+    // whole batch is one screenshot (P1: one frame each cost 1-2 s on a busy page).
+    const old = doc.getElementById("drd-specimen");
+    if (old) old.remove();
+    const column = doc.createElement("div");
+    column.id = "drd-specimen";
+    column.setAttribute("style", "position:fixed;left:0;top:0;z-index:2147483647;margin:0;padding:0;display:flex;flex-direction:column;align-items:flex-start;opacity:1;visibility:visible;transform:none;filter:none");
+    const rows = arg.fonts.map((font) => {
+      const node = doc.createElement("div");
+      node.textContent = arg.text;
+      node.setAttribute(
+        "style",
+        [
+          "position:static", "margin:0", "padding:18px 22px",
+          "background:#ffffff", "color:#161616", "white-space:nowrap", "font-size:44px", "line-height:1.25",
+          `font-family:${font.stack}`, `font-weight:${font.weight}`, `font-style:${font.italic ? "italic" : "normal"}`,
+          "letter-spacing:0", "text-transform:none", "font-variation-settings:normal", "opacity:1", "visibility:visible",
+          "transform:none", "filter:none", "max-width:none", "width:auto",
+        ].join(";"),
+      );
+      column.appendChild(node);
+      return node;
+    });
+    root.appendChild(column);
+    return rows.map((node) => viewBox(node.getBoundingClientRect()));
+  }
+
+  if (mode === "unspecimen") {
+    const old = doc.getElementById("drd-specimen");
+    if (old) old.remove();
+    return true;
+  }
+
+  if (mode === "resolveVars") {
+    const out = [];
+    const probe = doc.createElement("span");
+    probe.style.display = "none";
+    root.appendChild(probe);
+    const rootStyle = W.getComputedStyle(root);
+    for (const name of arg.slice(0, 400)) {
+      const value = rootStyle.getPropertyValue(name).trim();
+      if (!value) continue;
+      probe.style.color = "";
+      probe.style.color = `var(${name})`;
+      const color = probe.style.color ? rgba(W.getComputedStyle(probe).color) : null;
+      out.push({ name, value: value.slice(0, 200), color: color && /^(#|rgb|hsl|oklch|oklab|lab|lch|color\()/i.test(value) ? key(over(color, WHITE)) : null });
+    }
+    probe.remove();
+    return out;
+  }
+
+  if (mode !== "dom") throw new Error(`unknown mode ${mode}`);
+
+  /* ------------------------------------------------------------ DOM pass --- */
+
+  const LIMITS = { elements: 15000, runs: 4000, components: 140, images: 80, links: 300, styles: 40, boxes: 40 };
+
+  const metaContent = (selector) => {
+    const node = doc.querySelector(selector);
+    return node ? clean(node.getAttribute("content")) : "";
+  };
+  const iconLink = doc.querySelector('link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]');
+  const canonical = doc.querySelector('link[rel="canonical"]');
   const meta = {
-    title: (document.title || "").trim(),
+    title: clean(doc.title),
     description: metaContent('meta[name="description"]') || metaContent('meta[property="og:description"]'),
     siteName: metaContent('meta[property="og:site_name"]'),
     ogImage: metaContent('meta[property="og:image"]'),
     themeColor: metaContent('meta[name="theme-color"]'),
     generator: metaContent('meta[name="generator"]'),
-    lang: (document.documentElement.getAttribute("lang") || "").trim(),
+    lang: clean(root.getAttribute("lang")),
     canonical: canonical ? canonical.href : "",
     favicon: iconLink ? iconLink.href : "",
   };
 
-  /* --------------------------------------------------------- elements ---- */
+  // Clear tags from a previous run in this same page (a retried stage).
+  for (const el of doc.querySelectorAll("[data-drd-c],[data-drd-t],[data-drd-f]")) {
+    el.removeAttribute("data-drd-c");
+    el.removeAttribute("data-drd-t");
+    el.removeAttribute("data-drd-f");
+  }
 
-  const all = Array.prototype.slice.call(document.body.querySelectorAll("*"), 0, 12000);
-  const fontUse = new Map();
-  const colorUse = new Map();
-  const candidates = [];
+  const colors = new Map();
+  function usage(c) {
+    const k = key(c);
+    let u = colors.get(k);
+    if (!u) {
+      u = { rgb: k, bgCount: 0, bgArea: 0, textArea: 0, textCount: 0, border: 0, interactive: 0, svg: 0, gradient: 0, where: {}, bgBoxes: [], textBoxes: [], states: {} };
+      colors.set(k, u);
+    }
+    return u;
+  }
+  const note = (u, tag) => {
+    u.where[tag] = (u.where[tag] || 0) + 1;
+  };
+  const STATE = [
+    ["error", /(^|[\s_-])(error|errors|invalid|danger|alert-danger|is-error|has-error)([\s_-]|$)/i],
+    ["warning", /(^|[\s_-])(warning|warn|caution|alert-warning)([\s_-]|$)/i],
+    ["success", /(^|[\s_-])(success|valid|is-valid|alert-success|confirmed)([\s_-]|$)/i],
+  ];
+  function stateOf(el) {
+    const cls = typeof el.className === "string" ? el.className : "";
+    if (el.getAttribute("aria-invalid") === "true") return "error";
+    for (const [name, re] of STATE) if (re.test(cls) || re.test(el.getAttribute("role") === "alert" ? "alert-danger" : "")) return name;
+    return null;
+  }
+  const INTERACTIVE = "a[href],button,input,select,textarea,[role=button],[role=link],summary";
 
-  const noteColor = (hex, role) => {
-    if (!hex) return;
-    const entry = colorUse.get(hex) || { hex, count: 0, roles: {} };
-    entry.count += 1;
-    entry.roles[role] = (entry.roles[role] || 0) + 1;
-    colorUse.set(hex, entry);
+  const all = Array.prototype.slice.call(doc.body ? doc.body.querySelectorAll("*") : [], 0, LIMITS.elements);
+  const rects = new Map();
+  const rectOf = (el) => {
+    let r = rects.get(el);
+    if (!r) {
+      r = el.getBoundingClientRect();
+      rects.set(el, r);
+    }
+    return r;
   };
 
+  const spacing = {};
+  const widths = {};
+  const columns = {};
+  const shadows = {};
+  const bump = (map, k, n = 1) => {
+    map[k] = (map[k] || 0) + n;
+  };
+  const SVG_SHAPES = /^(path|circle|rect|polygon|ellipse|line|polyline|text|use)$/i;
+
   for (const el of all) {
-    const style = window.getComputedStyle(el);
-    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) < 0.05) continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) continue;
-
-    const own = text(el).slice(0, 400);
-    if (own) {
-      const family = style.fontFamily.split(",")[0].replace(/["']/g, "").trim();
-      if (family) {
-        const entry = fontUse.get(family) || { family, count: 0, sizes: {}, weights: {}, sample: "" };
-        entry.count += 1;
-        entry.sizes[Math.round(parseFloat(style.fontSize))] = (entry.sizes[Math.round(parseFloat(style.fontSize))] || 0) + 1;
-        entry.weights[style.fontWeight] = (entry.weights[style.fontWeight] || 0) + 1;
-        if (!entry.sample && own.length > 8) entry.sample = own.slice(0, 90);
-        fontUse.set(family, entry);
-      }
-      noteColor(toHex(style.color), "text");
-    }
-    noteColor(toHex(style.backgroundColor), "background");
-    if (style.borderTopWidth !== "0px" || style.borderBottomWidth !== "0px") noteColor(toHex(style.borderTopColor), "border");
-
-    if (rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT || rect.width * rect.height < MIN_AREA) {
-      // Small elements are still candidates when they are clearly components.
-      const tag = el.tagName.toLowerCase();
-      const small = tag === "button" || (tag === "a" && BUTTONISH.test(el.className || "")) || tag === "img" || tag === "svg";
-      if (!small || rect.width < 24 || rect.height < 16) continue;
-    }
-
     const tag = el.tagName.toLowerCase();
-    const role = el.getAttribute("role") || "";
-    const classes = typeof el.className === "string" ? el.className : "";
-    const hasBackground = style.backgroundImage !== "none" || toHex(style.backgroundColor) !== null;
-    const hasEdge = style.boxShadow !== "none" || parseFloat(style.borderTopWidth) > 0 || parseFloat(style.borderRadius) > 0;
-    const structural = /^(header|nav|main|section|article|aside|footer|form|figure|table|ul|ol|dl|h1|h2|h3|video|picture|img|svg|button|label|blockquote)$/.test(tag);
-    const layout = (style.display === "flex" || style.display === "grid") && el.children.length >= 2;
-    const buttonish = tag === "button" || (tag === "a" && BUTTONISH.test(classes));
-    if (!structural && !layout && !buttonish && !(hasBackground && hasEdge)) continue;
+    if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template" || tag === "link" || tag === "meta") continue;
+    const r = rectOf(el);
+    if (!visible(el, r)) continue;
+    const s = css(el);
+    const area = r.width * r.height;
+    const interactive = el.matches(INTERACTIVE);
+    const state = stateOf(el);
 
-    let guess = "section";
-    if (tag === "img" || tag === "picture" || tag === "svg" || tag === "video") guess = "image";
-    else if (style.backgroundImage.indexOf("url(") === 0) guess = "image";
-    else if (buttonish) guess = "button";
-    else if (tag === "header" || tag === "nav" || role === "navigation") guess = "nav";
-    else if (tag === "footer" || role === "contentinfo") guess = "footer";
-    else if (tag === "form" || tag === "label") guess = "form";
-    else if (/^h[1-3]$/.test(tag)) guess = "type";
-    else if (rect.top + scrollY < window.innerHeight && rect.height > window.innerHeight * 0.4) guess = "hero";
-    else if (layout && el.children.length >= 3) guess = "grid";
-    else if (hasEdge && own.length > 20) guess = "card";
-
-    const heading = el.querySelector("h1, h2, h3, h4");
-    const label =
-      (heading ? text(heading) : "") ||
-      (el.getAttribute("aria-label") || "").trim() ||
-      (tag === "img" ? (el.getAttribute("alt") || "").trim() : "") ||
-      own.slice(0, 60) ||
-      (classes ? classes.split(/\s+/)[0] : "") ||
-      tag;
-
-    candidates.push({
-      selector: selectorFor(el),
-      tag,
-      label: label.slice(0, 80),
-      guess,
-      x: Math.round(rect.left + scrollX),
-      y: Math.round(rect.top + scrollY),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      area: Math.round(rect.width * rect.height),
-      depth: (() => {
-        let d = 0;
-        let p = el.parentElement;
-        while (p) {
-          d += 1;
-          p = p.parentElement;
+    if (el instanceof SVGElement) {
+      if (SVG_SHAPES.test(tag)) {
+        const behind = backdrop(el.ownerSVGElement || el.parentElement || el).color;
+        for (const prop of ["fill", "stroke"]) {
+          const v = s[prop];
+          if (!v || v === "none" || v.indexOf("url(") >= 0) continue;
+          const c = rgba(v);
+          if (!c) continue;
+          const u = usage(over(c, behind));
+          u.svg += Math.min(area, 40000);
+          note(u, "svg");
         }
-        return d;
-      })(),
-      text: own.slice(0, 220),
-      styles: {
-        fontFamily: style.fontFamily,
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        lineHeight: style.lineHeight,
-        letterSpacing: style.letterSpacing,
-        textTransform: style.textTransform,
-        color: style.color,
-        backgroundColor: style.backgroundColor,
-        backgroundImage: style.backgroundImage === "none" ? "none" : style.backgroundImage.slice(0, 160),
-        borderRadius: style.borderRadius,
-        borderWidth: style.borderTopWidth,
-        borderColor: style.borderTopColor,
-        boxShadow: style.boxShadow === "none" ? "none" : style.boxShadow.slice(0, 160),
-        padding: `${style.paddingTop} ${style.paddingRight} ${style.paddingBottom} ${style.paddingLeft}`,
-        display: style.display,
-        gap: style.gap,
-        justifyContent: style.justifyContent,
-        alignItems: style.alignItems,
-        textAlign: style.textAlign,
-        transition: style.transitionDuration === "0s" ? "none" : `${style.transitionDuration} ${style.transitionTimingFunction}`,
-      },
+      }
+      continue;
+    }
+
+    const own = rgba(s.backgroundColor);
+    if (own) {
+      const behind = el.parentElement ? backdrop(el.parentElement).color : WHITE;
+      const u = usage(over(own, behind));
+      u.bgCount += 1;
+      u.bgArea += area;
+      if (interactive) u.interactive += area;
+      if (state) u.states[state] = (u.states[state] || 0) + 1;
+      if (u.bgBoxes.length < LIMITS.boxes && area >= 64) u.bgBoxes.push(pageBox(r));
+      note(u, tag);
+    }
+    const bi = s.backgroundImage;
+    if (bi && bi !== "none" && bi.indexOf("gradient(") >= 0) {
+      const stops = bi.match(COLOR_TOKEN) || [];
+      for (const stop of stops) {
+        const c = rgba(stop);
+        if (!c) continue;
+        const u = usage(over(c, WHITE));
+        u.gradient += area / stops.length;
+        note(u, tag);
+      }
+    }
+    const sides = [
+      ["Top", r.width],
+      ["Bottom", r.width],
+      ["Left", r.height],
+      ["Right", r.height],
+    ];
+    for (const [side, length] of sides) {
+      const w = px(s[`border${side}Width`]);
+      if (w <= 0 || s[`border${side}Style`] === "none" || s[`border${side}Style`] === "hidden") continue;
+      const c = rgba(s[`border${side}Color`]);
+      if (!c) continue;
+      const u = usage(over(c, backdrop(el).color));
+      u.border += w * length;
+      if (state) u.states[state] = (u.states[state] || 0) + 1;
+      note(u, tag);
+    }
+
+    if (s.boxShadow && s.boxShadow !== "none" && area >= 400) bump(shadows, s.boxShadow.slice(0, 200));
+
+    if (area >= 2000 && el.children.length >= 1 && tag !== "svg") {
+      for (const side of ["Top", "Right", "Bottom", "Left"]) {
+        const v = px(s[`padding${side}`]);
+        if (v > 0 && v <= 256) bump(spacing, String(Math.round(v * 2) / 2));
+      }
+      for (const side of ["Top", "Bottom"]) {
+        const v = px(s[`margin${side}`]);
+        if (v > 0 && v <= 256) bump(spacing, String(Math.round(v * 2) / 2));
+      }
+      if (s.display.indexOf("flex") >= 0 || s.display.indexOf("grid") >= 0) {
+        for (const g of [s.rowGap, s.columnGap]) {
+          const v = px(g);
+          if (v > 0 && v <= 256) bump(spacing, String(Math.round(v * 2) / 2));
+        }
+      }
+      if (r.width >= 480 && r.width <= vw - 16 && Math.abs(r.left - (vw - r.right)) <= 2) bump(widths, String(Math.round(r.width)));
+      if (s.display.indexOf("grid") >= 0 && el.children.length >= 3) {
+        const tracks = s.gridTemplateColumns.split(/\s+(?![^(]*\))/).filter(Boolean).length;
+        if (tracks >= 2 && tracks <= 12) bump(columns, String(tracks), el.children.length);
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------- text runs --- */
+
+  const ownText = new Map();
+  if (doc.body) {
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const value = node.nodeValue;
+      if (!value || !/\S/.test(value)) continue;
+      const parent = node.parentElement;
+      if (!parent) continue;
+      if (parent.closest("script,style,noscript,template,svg,textarea,[aria-hidden=true] svg")) continue;
+      ownText.set(parent, (ownText.get(parent) || "") + value);
+    }
+  }
+
+  const runs = [];
+  const styleGroups = new Map();
+  for (const [el, raw] of ownText) {
+    if (runs.length >= LIMITS.runs) break;
+    const text = clean(raw);
+    if (!text) continue;
+    const r = rectOf(el);
+    if (!visible(el, r)) continue;
+    const s = css(el);
+    const size = px(s.fontSize);
+    if (size < 4) continue;
+    const lineHeight = s.lineHeight === "normal" ? Math.round(size * 1.2 * 10) / 10 : px(s.lineHeight);
+    const tracking = s.letterSpacing === "normal" ? 0 : px(s.letterSpacing);
+    const fg = rgba(s.color);
+    if (!fg) continue;
+    const b = backdrop(el);
+    const color = over(fg, b.color);
+    const heading = el.closest("h1,h2,h3,h4,h5,h6");
+    const context = {
+      heading: heading ? Number(heading.tagName[1]) : 0,
+      button: Boolean(el.closest("button,[role=button],input[type=submit],input[type=button]")),
+      link: Boolean(el.closest("a[href]")),
+      nav: Boolean(el.closest("nav,[role=navigation],header")),
+      footer: Boolean(el.closest("footer,[role=contentinfo]")),
+      label: Boolean(el.closest("label,legend")),
+      mono: Boolean(el.closest("code,pre,kbd,samp")),
+      small: Boolean(el.closest("small,figcaption,sup,sub")),
+    };
+    const chars = text.length;
+    const glyph = chars * size * size * 0.5;
+    const run = {
+      text: text.slice(0, 80),
+      chars,
+      tag: el.tagName.toLowerCase(),
+      family: s.fontFamily,
+      size,
+      weight: Number(s.fontWeight) || 400,
+      lineHeight,
+      tracking,
+      transform: s.textTransform,
+      italic: s.fontStyle !== "normal",
+      variation: s.fontVariationSettings === "normal" ? "" : s.fontVariationSettings,
+      color: key(color),
+      background: b.image ? null : key(b.color),
+      onImage: b.image,
+      glyph,
+      box: pageBox(r),
+      context,
+      style: -1,
+    };
+    const u = usage(color);
+    u.textArea += glyph;
+    u.textCount += 1;
+    if (context.button || context.link || el.matches(INTERACTIVE)) u.interactive += glyph;
+    const state = stateOf(el) || (el.parentElement ? stateOf(el.parentElement) : null);
+    if (state) u.states[state] = (u.states[state] || 0) + 1;
+    if (u.textBoxes.length < LIMITS.boxes) u.textBoxes.push(run.box);
+    note(u, run.tag);
+
+    const groupKey = [s.fontFamily, run.weight, Math.round(size * 2) / 2, Math.round((lineHeight / size) * 20) / 20, Math.round((tracking / size) * 200) / 200, run.transform, run.italic ? 1 : 0].join("|");
+    let group = styleGroups.get(groupKey);
+    if (!group) {
+      group = { key: groupKey, glyph: 0, runs: 0, rep: null, repGlyph: -1, locations: [] };
+      styleGroups.set(groupKey, group);
+    }
+    group.glyph += glyph;
+    group.runs += 1;
+    if (group.locations.length < LIMITS.boxes) group.locations.push(run.box);
+    // The representative is the biggest block that still fits a viewport, so
+    // the crop can be taken from a real, settled screen of the page.
+    if (glyph > group.repGlyph && r.height <= vh * 0.8 && r.width <= vw) {
+      group.rep = el;
+      group.repGlyph = glyph;
+      group.repRun = runs.length;
+    }
+    run.style = groupKey;
+    runs.push(run);
+  }
+
+  const textStyles = [...styleGroups.values()]
+    .filter((g) => g.rep)
+    .sort((a, b) => b.glyph - a.glyph)
+    .slice(0, LIMITS.styles)
+    .map((g, index) => {
+      g.rep.setAttribute("data-drd-t", String(index));
+      return { id: index, key: g.key, glyph: g.glyph, runs: g.runs, rep: g.repRun, locations: g.locations };
     });
-    if (candidates.length >= LIMIT_ELEMENTS) break;
+
+  /* --------------------------------------------------------- components --- */
+
+  const components = [];
+  const taken = new Set();
+  const tokensOf = (el) => {
+    const s = css(el);
+    const r = rectOf(el);
+    const behind = el.parentElement ? backdrop(el.parentElement).color : WHITE;
+    const own = rgba(s.backgroundColor);
+    const fg = rgba(s.color);
+    const bc = rgba(s.borderTopColor);
+    return {
+      background: own ? key(over(own, behind)) : null,
+      backgroundImage: s.backgroundImage === "none" ? null : (s.backgroundImage.indexOf("url(") >= 0 ? "image" : "gradient"),
+      color: fg ? key(over(fg, backdrop(el).color)) : null,
+      borderWidth: px(s.borderTopWidth),
+      borderStyle: s.borderTopStyle,
+      borderColor: bc && px(s.borderTopWidth) > 0 ? key(over(bc, backdrop(el).color)) : null,
+      radius: [px(s.borderTopLeftRadius), px(s.borderTopRightRadius), px(s.borderBottomRightRadius), px(s.borderBottomLeftRadius)],
+      padding: [px(s.paddingTop), px(s.paddingRight), px(s.paddingBottom), px(s.paddingLeft)],
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+      gap: s.display.indexOf("flex") >= 0 || s.display.indexOf("grid") >= 0 ? px(s.columnGap) || px(s.rowGap) : 0,
+      fontFamily: s.fontFamily,
+      fontSize: px(s.fontSize),
+      fontWeight: Number(s.fontWeight) || 400,
+      lineHeight: s.lineHeight === "normal" ? null : px(s.lineHeight),
+      letterSpacing: s.letterSpacing === "normal" ? 0 : px(s.letterSpacing),
+      textTransform: s.textTransform,
+      shadow: s.boxShadow === "none" ? null : s.boxShadow.slice(0, 240),
+      transition: s.transitionDuration && s.transitionDuration !== "0s" ? { duration: s.transitionDuration.split(",")[0].trim(), easing: s.transitionTimingFunction.split(/,(?![^(]*\))/)[0].trim(), property: s.transitionProperty.split(",")[0].trim() } : null,
+    };
+  };
+  const nameOf = (el) => {
+    const aria = clean(el.getAttribute("aria-label"));
+    if (aria) return aria;
+    const by = el.getAttribute("aria-labelledby");
+    if (by) {
+      const t = clean(by.split(/\s+/).map((id) => (doc.getElementById(id) || {}).textContent || "").join(" "));
+      if (t) return t;
+    }
+    if (el.tagName === "INPUT") {
+      const v = clean(el.getAttribute("value")) || clean(el.getAttribute("placeholder"));
+      if (v) return v;
+      if (el.id) {
+        const label = doc.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (label && clean(label.textContent)) return clean(label.textContent);
+      }
+    }
+    const own = clean(ownText.get(el));
+    if (own) return own;
+    const heading = el.querySelector("h1,h2,h3,h4,h5,h6");
+    if (heading && clean(heading.textContent)) return clean(heading.textContent);
+    const img = el.querySelector("img[alt]");
+    if (img && clean(img.getAttribute("alt"))) return clean(img.getAttribute("alt"));
+    // Visible text inside, never script source: own text of descendants only.
+    let text = "";
+    for (const [node, value] of ownText) {
+      if (text.length > 60) break;
+      if (node !== el && el.contains(node)) text += " " + value;
+    }
+    return clean(text);
+  };
+  const hasSurface = (el) => {
+    const s = css(el);
+    const own = rgba(s.backgroundColor);
+    const parent = el.parentElement ? backdrop(el.parentElement).color : WHITE;
+    const differs = own && key(over(own, parent)) !== key(parent);
+    return Boolean(differs || px(s.borderTopWidth) > 0 || px(s.borderBottomWidth) > 0 || s.boxShadow !== "none" || (s.backgroundImage !== "none" && s.backgroundImage.indexOf("gradient") >= 0));
+  };
+  const addComponent = (el, kind) => {
+    if (components.length >= LIMITS.components || taken.has(el)) return;
+    const r = rectOf(el);
+    if (!visible(el, r)) return;
+    taken.add(el);
+    const id = components.length;
+    el.setAttribute("data-drd-c", String(id));
+    const s = css(el);
+    components.push({
+      id,
+      kind,
+      tag: el.tagName.toLowerCase(),
+      name: nameOf(el).slice(0, 80),
+      box: pageBox(r),
+      fixed: s.position === "fixed" || s.position === "sticky",
+      tokens: tokensOf(el),
+      state: stateOf(el),
+    });
+  };
+
+  // Navigation, footer, hero first: they are single and structural.
+  const navCandidates = [...doc.querySelectorAll("header, nav, [role=navigation]")].filter((el) => {
+    if (el.tagName === "HEADER" && el.querySelectorAll("a[href]").length < 3) return false;
+    return !el.parentElement || !el.parentElement.closest("header, nav, [role=navigation]");
+  });
+  for (const el of navCandidates.slice(0, 4)) addComponent(el, "navigation");
+
+  const h1 = doc.querySelector("h1");
+  if (h1) {
+    let node = h1;
+    let hero = null;
+    while (node && node !== doc.body && node !== root) {
+      const r = rectOf(node);
+      if (r.top + scrollY < vh && r.height >= vh * 0.4 && r.width >= vw * 0.6) {
+        hero = node;
+        break;
+      }
+      node = node.parentElement;
+    }
+    if (hero && rectOf(hero).height <= vh * 2.2) addComponent(hero, "hero");
   }
 
-  // Collapse wrappers: a parent whose box matches a child within a few pixels
-  // adds a selectable region that selects the same pixels. Keep the shallower
-  // one — it is the one a designer means by "this block".
-  candidates.sort((a, b) => b.area - a.area || a.depth - b.depth);
-  const kept = [];
-  for (const candidate of candidates) {
-    const duplicate = kept.find(
-      (other) =>
-        Math.abs(other.x - candidate.x) < 6 &&
-        Math.abs(other.y - candidate.y) < 6 &&
-        Math.abs(other.width - candidate.width) < 8 &&
-        Math.abs(other.height - candidate.height) < 8,
-    );
-    if (!duplicate) kept.push(candidate);
+  for (const el of [...doc.querySelectorAll("footer, [role=contentinfo]")].filter((el) => !el.parentElement || !el.parentElement.closest("footer, [role=contentinfo]")).slice(0, 2)) {
+    addComponent(el, "footer");
   }
 
-  /* ------------------------------------------------------------ links ---- */
+  let buttons = 0;
+  for (const el of doc.querySelectorAll("button, input[type=submit], input[type=button], [role=button], a[href]")) {
+    if (buttons >= 48) break;
+    const r = rectOf(el);
+    if (r.width < 24 || r.height < 20 || r.height > 140 || r.width > vw * 0.9) continue;
+    const s = css(el);
+    const isLink = el.tagName === "A";
+    if (isLink) {
+      const hpad = Math.min(px(s.paddingLeft), px(s.paddingRight));
+      const radius = px(s.borderTopLeftRadius);
+      if (!hasSurface(el) || !(hpad >= 8 || radius > 0)) continue;
+      // An image link with a border is a card or a thumbnail, not a button.
+      if (el.querySelector("img, picture, video") && r.height > 80) continue;
+    }
+    addComponent(el, isLink ? "link-button" : "button");
+    buttons += 1;
+  }
 
+  let fields = 0;
+  for (const el of doc.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea, select")) {
+    if (fields >= 12) break;
+    const r = rectOf(el);
+    if (r.width < 40 || r.height < 16) continue;
+    addComponent(el, "field");
+    fields += 1;
+  }
+  for (const el of [...doc.querySelectorAll("form")].slice(0, 4)) {
+    if (el.querySelector("input:not([type=hidden]), textarea, select")) addComponent(el, "form");
+  }
+
+  // Cards: repetition is the signal. Siblings sharing a structural signature,
+  // three or more, each with a surface of its own.
+  const stem = (el) => {
+    const cls = typeof el.className === "string" ? el.className.trim().split(/\s+/)[0] || "" : "";
+    return `${el.tagName}.${cls.replace(/(--|__)[\w-]*$/, "").replace(/[-_]?\d+$/, "")}`;
+  };
+  let cards = 0;
+  const parents = new Set();
+  for (const el of all) if (el.children.length >= 3) parents.add(el);
+  for (const parent of parents) {
+    if (cards >= 36) break;
+    const groups = new Map();
+    for (const child of parent.children) {
+      const r = rectOf(child);
+      if (r.width < 120 || r.height < 80 || !visible(child, r)) continue;
+      const sig = stem(child);
+      if (!groups.has(sig)) groups.set(sig, []);
+      groups.get(sig).push(child);
+    }
+    for (const members of groups.values()) {
+      if (members.length < 3) continue;
+      const boxed = members.filter((m) => {
+        if (hasSurface(m) || px(css(m).borderTopLeftRadius) > 0) return true;
+        // The surface is often one wrapper down (a link around the card).
+        const only = m.children.length === 1 ? m.children[0] : null;
+        return Boolean(only && (hasSurface(only) || px(css(only).borderTopLeftRadius) > 0));
+      });
+      if (boxed.length < 3) continue;
+      for (const m of boxed.slice(0, 8)) {
+        if (cards >= 36) break;
+        const target = hasSurface(m) || px(css(m).borderTopLeftRadius) > 0 ? m : m.children[0];
+        if (rectOf(target).height > vh * 1.5) continue;
+        addComponent(target, "card");
+        cards += 1;
+      }
+    }
+  }
+
+  let badges = 0;
+  for (const el of all) {
+    if (badges >= 12) break;
+    if (taken.has(el) || el.matches(INTERACTIVE) || el.closest("a[href],button")) continue;
+    const r = rectOf(el);
+    if (r.height < 14 || r.height > 32 || r.width > 200 || r.width < 20) continue;
+    const text = clean(ownText.get(el));
+    if (!text || text.length > 24) continue;
+    const s = css(el);
+    if (!hasSurface(el) || px(s.borderTopLeftRadius) < 2) continue;
+    addComponent(el, "badge");
+    badges += 1;
+  }
+
+  /* ------------------------------------------------------------- images --- */
+
+  const images = [];
+  for (const el of all) {
+    if (images.length >= LIMITS.images) break;
+    const tag = el.tagName;
+    const r = rectOf(el);
+    if (r.width < 48 || r.height < 48 || !visible(el, r)) continue;
+    let kind = null;
+    if (tag === "IMG" && el.complete && el.naturalWidth > 0) kind = "img";
+    else if (tag === "VIDEO") kind = "video";
+    else if (tag === "CANVAS") kind = "canvas";
+    else if ((tag === "svg" || tag === "SVG") && r.width >= 120 && r.height >= 120) kind = "svg";
+    else if (css(el).backgroundImage.indexOf("url(") >= 0) kind = "background";
+    if (!kind) continue;
+    images.push({ kind, box: pageBox(r), alt: tag === "IMG" ? clean(el.getAttribute("alt")).slice(0, 80) : "" });
+  }
+
+  /* ------------------------------------------------------- fixed layers --- */
+
+  const fixed = [];
+  for (const el of all) {
+    const s = css(el);
+    if (s.position !== "fixed" && s.position !== "sticky") continue;
+    if (el.parentElement && el.parentElement.closest("[data-drd-f]")) continue;
+    const r = rectOf(el);
+    if (r.width * r.height < 1000 || !visible(el, r)) continue;
+    el.setAttribute("data-drd-f", "1");
+    fixed.push({ position: s.position, box: pageBox(r), tag: el.tagName.toLowerCase() });
+  }
+
+  /* -------------------------------------------------- stylesheets ---------- */
+
+  const customProperties = new Set();
+  let darkScheme = false;
+  const walkRules = (rules) => {
+    for (const rule of rules) {
+      if (rule.media && /prefers-color-scheme:\s*dark/.test(rule.media.mediaText || "")) darkScheme = true;
+      if (rule.selectorText && /(^|,)\s*(:root|html)\b/.test(rule.selectorText) && rule.style) {
+        for (let i = 0; i < rule.style.length; i += 1) {
+          const name = rule.style[i];
+          if (name.startsWith("--")) customProperties.add(name);
+        }
+      }
+      if (rule.cssRules) walkRules(rule.cssRules);
+    }
+  };
+  for (const sheet of doc.styleSheets) {
+    try {
+      walkRules(sheet.cssRules);
+    } catch {
+      // Cross-origin sheet: the runner reads its text from the network instead.
+    }
+  }
+
+  /* ------------------------------------------------------------- links --- */
+
+  const CREDIT = /(site|website|design(ed)?|built|made|developed|crafted|réalis|conçu|développé|created)\s+(by|par)|^(by|par)\s|credits?|colophon/i;
   const links = [];
   const seenHref = new Set();
-  for (const anchor of document.querySelectorAll("a[href]")) {
+  for (const anchor of doc.querySelectorAll("a[href]")) {
     let href;
     try {
-      href = new URL(anchor.getAttribute("href"), document.baseURI);
+      href = new URL(anchor.getAttribute("href"), doc.baseURI);
     } catch {
       continue;
     }
     if (href.protocol !== "http:" && href.protocol !== "https:") continue;
     href.hash = "";
-    const key = href.toString();
-    if (seenHref.has(key)) continue;
-    seenHref.add(key);
-    const rect = anchor.getBoundingClientRect();
-    const anchorText = text(anchor).slice(0, 120);
-    const context = anchor.closest("footer") ? text(anchor.parentElement || anchor).slice(0, 160) : "";
+    const k = href.toString();
+    if (seenHref.has(k)) continue;
+    seenHref.add(k);
+    const r = anchor.getBoundingClientRect();
+    const anchorText = clean(anchor.textContent).slice(0, 120);
+    const context = anchor.closest("footer") ? clean((anchor.parentElement || anchor).textContent).slice(0, 160) : "";
     links.push({
-      href: key,
+      href: k,
       host: href.hostname,
       anchor: anchorText,
       rel: anchor.getAttribute("rel") || "",
-      inFooter: Boolean(anchor.closest("footer")) || rect.top + scrollY > pageHeight - 700,
+      inFooter: Boolean(anchor.closest("footer")) || r.top + scrollY > pageHeight - 700,
       creditLike: CREDIT.test(anchorText) || CREDIT.test(context) || /author|designer|me\b/.test(anchor.getAttribute("rel") || ""),
     });
-    if (links.length >= LIMIT_LINKS) break;
+    if (links.length >= LIMITS.links) break;
   }
-
-  /* ---------------------------------------------------------- summary ---- */
-
-  const topOf = (map, n) =>
-    Array.from(map.values())
-      .sort((a, b) => b.count - a.count)
-      .slice(0, n);
 
   return {
     meta,
-    page: { width: pageWidth, height: pageHeight, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight },
-    elements: kept,
+    page: { width: pageWidth, height: pageHeight, viewportWidth: vw, viewportHeight: vh },
+    colors: [...colors.values()],
+    runs,
+    textStyles,
+    components,
+    images,
+    fixed,
+    spacing,
+    widths,
+    columns,
+    shadows,
+    customProperties: [...customProperties],
+    darkScheme,
     links,
-    fonts: topOf(fontUse, 12).map((entry) => ({
-      family: entry.family,
-      count: entry.count,
-      sizes: Object.keys(entry.sizes).map(Number).sort((a, b) => a - b),
-      weights: Object.keys(entry.weights).sort(),
-      sample: entry.sample,
-    })),
-    colors: topOf(colorUse, 18).map((entry) => ({
-      hex: entry.hex,
-      count: entry.count,
-      role: Object.keys(entry.roles).sort((a, b) => entry.roles[b] - entry.roles[a])[0],
-    })),
   };
 })

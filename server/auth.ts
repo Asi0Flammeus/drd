@@ -73,12 +73,7 @@ export function createUser(email: string, password: string): SessionUser {
     }
     throw error;
   }
-  // Every account starts with the two roots the whole UI assumes exist.
-  const insert = db().prepare(
-    "INSERT INTO collections (id, user_id, parent_id, name, kind, position, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)",
-  );
-  insert.run(randomUUID(), id, "Boîte de réception", "inbox", 0, now);
-  insert.run(randomUUID(), id, "Bibliothèque", "folder", 1, now);
+  // A new account starts empty: libraries fill from Garder, boards are made on demand.
   return { id, email };
 }
 

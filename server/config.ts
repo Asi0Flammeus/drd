@@ -47,14 +47,14 @@ export const config = {
 
   capture: {
     /** Hard ceiling on one capture, navigation plus extraction plus screenshots. */
-    timeoutMs: num("DRD_CAPTURE_TIMEOUT_MS", 60_000),
-    navigationTimeoutMs: num("DRD_CAPTURE_NAV_TIMEOUT_MS", 25_000),
+    timeoutMs: num("DRD_CAPTURE_TIMEOUT_MS", 150_000),
+    navigationTimeoutMs: num("DRD_CAPTURE_NAV_TIMEOUT_MS", 30_000),
+    /** After the document loads, how long the network gets to go quiet before the pipeline moves on anyway. */
+    settleTimeoutMs: num("DRD_CAPTURE_SETTLE_TIMEOUT_MS", 10_000),
     maxBytes: num("DRD_CAPTURE_MAX_BYTES", 30_000_000),
     maxRequests: num("DRD_CAPTURE_MAX_REQUESTS", 400),
     maxRedirects: num("DRD_CAPTURE_MAX_REDIRECTS", 5),
     maxPageHeight: num("DRD_CAPTURE_MAX_HEIGHT", 12_000),
-    maxElements: num("DRD_CAPTURE_MAX_ELEMENTS", 140),
-    maxCrops: num("DRD_CAPTURE_MAX_CROPS", 28),
     viewportWidth: num("DRD_CAPTURE_VIEWPORT_WIDTH", 1280),
     viewportHeight: num("DRD_CAPTURE_VIEWPORT_HEIGHT", 900),
     concurrency: num("DRD_CAPTURE_CONCURRENCY", 1),
@@ -74,6 +74,19 @@ export const config = {
       "DRD_CAPTURE_USER_AGENT",
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 DRD/0.1 (+https://github.com/Asi0Flammeus/drd)",
     ),
+  },
+
+  image: {
+    maxBytes: num("DRD_IMAGE_MAX_BYTES", 20_000_000),
+    maxPixels: num("DRD_IMAGE_MAX_PIXELS", 40_000_000),
+    maxDimension: num("DRD_IMAGE_MAX_DIMENSION", 12_000),
+    requestTimeoutMs: num("DRD_IMAGE_TIMEOUT_MS", 20_000),
+    visionEndpoint: str("DRD_VISION_ENDPOINT", ""),
+    visionModel: str("DRD_VISION_MODEL", ""),
+    visionApiKey: str("DRD_VISION_API_KEY", ""),
+    generationEndpoint: str("DRD_IMAGE_GENERATION_ENDPOINT", ""),
+    generationModel: str("DRD_IMAGE_GENERATION_MODEL", ""),
+    generationApiKey: str("DRD_IMAGE_GENERATION_API_KEY", ""),
   },
 
   /** Optional conversational layer. Export never reads this. */

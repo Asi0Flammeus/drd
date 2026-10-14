@@ -49,7 +49,7 @@ into the image — which is exactly when captures would fail. The container
 | capabilities | drop `ALL`, add `SYS_CHROOT` | the one capability Chrome's zygote needs |
 | seccomp | `docker/chrome-seccomp.json` | Docker's default profile with `CLONE_NEWUSER` unblocked |
 | `no-new-privileges` | on | no escalation via `execve` |
-| `/dev/shm` | tmpfs 512 MB | Chrome crashes on large pages with Docker's 64 MB default |
+| `/dev/shm` | tmpfs 512 MB | Chrome crashes on large pages with Docker's 64 MB default; the runner uses it for Chrome's shared memory only while it is larger than `/tmp` (256 MB, which holds the profile) |
 | limits | 2 GB memory, 512 pids | a runaway page must not take the host with it |
 | migrations | run on every start | idempotent and transactional; removes the "did anyone migrate?" failure mode |
 

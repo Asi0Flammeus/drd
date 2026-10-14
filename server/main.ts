@@ -28,18 +28,24 @@ import { healthRoutes } from "./routes/health.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { captureRoutes, startCapture } from "./routes/captures.ts";
 import { libraryRoutes } from "./routes/library.ts";
+import { imageRoutes, ingestImageUrl } from "./routes/images.ts";
 import { discoveryRoutes } from "./routes/discovery.ts";
-import { packRoutes } from "./routes/packs.ts";
+import { exportRoutes } from "./routes/exports.ts";
 import { assistantRoutes } from "./routes/assistant.ts";
 import { parseUserUrl } from "./capture/url-guard.ts";
+import { LibraryError } from "./library/index.ts";
+import { onCaptureReady } from "./capture/runner.ts";
+import { analyseCapture } from "./analyse/job.ts";
+import { repairLegacyItems } from "./library/repair.ts";
 
 const routes: Route[] = [
   ...healthRoutes,
   ...authRoutes,
   ...captureRoutes,
+  ...imageRoutes,
   ...libraryRoutes,
   ...discoveryRoutes,
-  ...packRoutes,
+  ...exportRoutes,
   ...assistantRoutes,
 ];
 
@@ -85,6 +91,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
 
+  if (method === "GET" && url.pathname === "/share") {
+    await share(req, res, url);
+    return;
+  }
   if (method === "GET") {
     await splat(req, res, url);
     return;
@@ -115,11 +125,29 @@ const SUBRESOURCE_DESTS = [
   "audio", "video", "track", "manifest", "worker", "sharedworker", "serviceworker", "report",
 ];
 
+/**
+ * Web Share Target (manifest `share_target`): Android's share sheet opens
+ * `/share?url=&text=&title=`. Chrome often puts the link in `text`, so the
+ * first URL found there counts too. Then it is the splat's path exactly.
+ */
+async function share(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const candidates = [url.searchParams.get("url") ?? "", ...(url.searchParams.get("text") ?? "").match(/https?:\/\/[^\s]+/g) ?? []];
+  const found = candidates.find((value) => value.trim() && parseUserUrl(value.trim()));
+  if (!found) {
+    redirect(res, "/app#/captures?error=Aucune%20adresse%20dans%20le%20partage.");
+    return;
+  }
+  await capture(req, res, parseUserUrl(found.trim()));
+}
+
 async function splat(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const raw = url.pathname.replace(/^\//, "") + url.search;
-  const target = parseUserUrl(raw);
+  await capture(req, res, parseUserUrl(raw));
+}
+
+async function capture(req: IncomingMessage, res: ServerResponse, target: URL | null): Promise<void> {
   if (!target) {
-    redirect(res, "/app#/inbox?error=url-illisible");
+    redirect(res, "/app#/captures?error=url-illisible");
     return;
   }
 
@@ -140,18 +168,33 @@ async function splat(req: IncomingMessage, res: ServerResponse, url: URL): Promi
   }
 
   try {
-    const capture = await startCapture(user.id, target.toString());
-    redirect(res, `/app#/captures/${capture.id}`);
+    const reference = await ingestImageUrl(user.id, target.toString());
+    if (reference.kind === "image") {
+      redirect(res, `/app#/items/${reference.itemId}`);
+      return;
+    }
+    const started = await startCapture(user.id, target.toString());
+    redirect(res, `/app#/captures/${started.id}/palette`);
   } catch (error) {
     const message = error instanceof HttpError ? error.message : "Capture impossible.";
-    redirect(res, `/app#/inbox?error=${encodeURIComponent(message)}`);
+    redirect(res, `/app#/captures?error=${encodeURIComponent(message)}`);
   }
 }
 
 function start(): void {
   mkdirSync(config.mediaDir, { recursive: true });
+  // Every finished capture is analysed at once; the capture module does not import the analysis.
+  onCaptureReady(async (captureId) => {
+    await analyseCapture(captureId);
+  });
   const applied = migrate();
   if (applied.applied.length) console.log(`[drd] migrations applied: ${applied.applied.join(", ")}`);
+  repairLegacyItems()
+    .then(({ repaired, rederived }) => {
+      if (repaired.length) console.log(`[drd] legacy items given their extracted pictures: ${repaired.join(", ")}`);
+      if (rederived.length) console.log(`[drd] legacy palettes re-derived from their capture (v1 payload kept in provenance): ${rederived.join(", ")}`);
+    })
+    .catch((error) => console.error("[drd] legacy item repair", error));
   purgeExpiredSessions();
   setInterval(purgeExpiredSessions, 6 * 3600_000).unref();
 
@@ -161,7 +204,7 @@ function start(): void {
         res.end();
         return;
       }
-      if (error instanceof HttpError) {
+      if (error instanceof HttpError || error instanceof LibraryError) {
         json(res, error.status, { error: error.code, message: error.message });
         return;
       }

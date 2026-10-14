@@ -35,6 +35,14 @@ reports back: a full-page screenshot, every significant element's **real
 bounding box and computed style**, per-element crops, the fonts and colours
 actually in use, and the outbound links.
 
+The same URL field and domain shortcut accept direct JPEG, PNG, WebP, GIF and
+AVIF responses. DRD guards and pins every redirect, decodes under explicit byte
+and pixel limits, stores the original bytes by SHA-256, and opens an image
+reference instead of Chrome. Reopening identical content opens the same item.
+Its fiche keeps three versioned palettes, reviewable semantic tag candidates
+and separately linked generated variations. A normal HTML response still uses
+the page capture pipeline.
+
 That server-side browser is not an implementation preference. A cross-origin
 page in an iframe cannot be read from JavaScript — there is no client-side
 trick that recovers an element's box or its font from someone else's site.
@@ -118,9 +126,10 @@ the second was an audit of that bench, not of this tool.
 ```
 server/           node:http + node:sqlite + puppeteer. No framework, no ORM.
   capture/        url-guard.ts (SSRF), runner.ts (browser), extract.browser.js
+  image/          guarded download, deterministic palettes, model evidence
   discovery/      taste profile + link-graph provider + the external seam
   export/         deterministic pack builder + a ZIP writer
-  routes/         auth · captures · library · discovery · packs · assistant
+  routes/         auth · captures · images · library · discovery · packs · assistant
 src/              Vite + TypeScript, no framework. Hash routing under /app.
 test/             the security and data-loss invariants only
 ```

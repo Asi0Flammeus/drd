@@ -6,7 +6,8 @@
  * a full-size playground stage can be the same component at two sizes.
  */
 
-import { h, icon, ICONS } from "./controls";
+import {h } from "./controls";
+import { icon } from "./icons";
 import { SAMPLES } from "../data/fonts";
 import { familyById } from "../data/fonts";
 import type { ColorRoles } from "../data/palettes";
@@ -98,7 +99,7 @@ export function mockup(variantId: string): HTMLElement {
       h("span", { class: "mk-stat-value", text: "12" }),
       h("span", { class: "mk-stat-label", text: "Places en terrasse" }),
     ]),
-    h("div", { class: "mk-note" }, [icon(ICONS.check, 14), h("span", { text: "Confirmation immédiate" })]),
+    h("div", { class: "mk-note" }, [icon("check", 14), h("span", { text: "Confirmation immédiate" })]),
   ]);
 
   return h("div", { class: "mockup" }, [nav, card, strip]);

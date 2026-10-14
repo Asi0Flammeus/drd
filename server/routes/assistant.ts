@@ -11,9 +11,11 @@
 import { config, llmConfigured } from "../config.ts";
 import { HttpError, json, readJson } from "../http.ts";
 import type { Route } from "../http.ts";
-import { buildPack, loadPackRefs } from "../export/pack.ts";
+import { buildPack } from "../export/pack.ts";
 import { db } from "../db.ts";
-import type { PackRow } from "../export/pack.ts";
+import { itemsByIds } from "../library/index.ts";
+
+type PackRow = { id: string; name: string; brief: string; item_ids: string; formats: string; created_at: string };
 
 export const assistantRoutes: Route[] = [
   {
@@ -53,12 +55,12 @@ export const assistantRoutes: Route[] = [
       if (!row) throw new HttpError(404, "not_found", "Pack introuvable.");
       let refIds: string[] = [];
       try {
-        const parsed: unknown = JSON.parse(row.ref_ids);
+        const parsed: unknown = JSON.parse(row.item_ids);
         if (Array.isArray(parsed)) refIds = parsed.filter((id): id is string => typeof id === "string");
       } catch {
         refIds = [];
       }
-      const built = buildPack(row, loadPackRefs(user.id, refIds));
+      const built = buildPack({ id: row.id, name: row.name, brief: row.brief, createdAt: row.created_at }, itemsByIds(user.id, refIds), ["tokens", "css", "tailwind", "brief"]);
       const grounding = built.entries
         .filter((entry) => entry.name.endsWith(".md") || entry.name.endsWith(".css"))
         .map((entry) => `--- ${entry.name} ---\n${entry.data.toString("utf8")}`)

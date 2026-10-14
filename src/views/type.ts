@@ -9,7 +9,7 @@
 
 import { FAMILIES, familyById, SAMPLES } from "../data/fonts";
 import type { FontFamily } from "../data/fonts";
-import { chips, fieldset, h, ICONS, slider, textButton } from "../ui/controls";
+import {chips, fieldset, h, slider, textButton } from "../ui/controls";
 import { applyVars, previewVars } from "../tokens";
 import type { Panel, ViewContext } from "./view";
 import { saveEntry } from "./save";
@@ -239,7 +239,7 @@ export function buildTypePanel(ctx: ViewContext): Panel {
     // paragraph at the same time.
     axisControls(ctx, "body", t.bodyFamily, `Body axes — ${body.name}`),
     fieldset("Keep it", "Saves face pair, every axis value and both scales into the library.", [
-      textButton("Save this pairing", ICONS.save, () => {
+      textButton("Save this pairing", "bookmark", () => {
         const label = `${display.name} × ${body.name}`;
         saveEntry(ctx, "type", label, structuredClone(ctx.ws.type));
       }),

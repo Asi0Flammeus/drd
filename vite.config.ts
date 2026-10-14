@@ -77,9 +77,9 @@ self.addEventListener('fetch', (event) => {
   // user a collection that silently disagrees with the server.
   if (url.pathname.startsWith('/api/')) return;
 
-  // Captured media never changes under its URL — cache on first view so a
-  // collection read offline still shows its screenshots.
-  if (url.pathname.startsWith('/media/')) {
+  // Captured media and item blobs never change under their URL: cache on
+  // first view so a library read offline still shows its pictures.
+  if (url.pathname.startsWith('/media/') || url.pathname.startsWith('/blobs/')) {
     event.respondWith((async () => {
       const cache = await caches.open(MEDIA_CACHE);
       const hit = await cache.match(request);
@@ -92,6 +92,23 @@ self.addEventListener('fetch', (event) => {
         return Response.error();
       }
     })());
+    return;
+  }
+
+  // The shell itself is network-first: a deploy takes effect on the next
+  // open, and the cached copy still answers when the network does not.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok && response.type === 'basic') {
+            const copy = response.clone();
+            caches.open(CACHE).then((cache) => cache.put('/app', copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match('/app').then((hit) => hit || caches.match('/index.html')).then((hit) => hit || Response.error()))
+    );
     return;
   }
 
@@ -129,6 +146,8 @@ export default {
     proxy: {
       "/api": "http://127.0.0.1:5178",
       "/media": "http://127.0.0.1:5178",
+      "/blobs": "http://127.0.0.1:5178",
+      "/share": "http://127.0.0.1:5178",
     },
   },
   preview: { host: "127.0.0.1", port: 4173 },

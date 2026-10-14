@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.ts";
+import { LIBRARY_SQL, migrateLibrary } from "./library/schema.ts";
 
 export type Db = DatabaseSync;
 
@@ -32,7 +33,11 @@ export function closeDb(): void {
   handle = null;
 }
 
-type Migration = { id: number; name: string; sql: string };
+/**
+ * `up` runs after `sql`, inside the same transaction, for data transforms SQL
+ * alone cannot express (hashing files, converting colour payloads).
+ */
+type Migration = { id: number; name: string; sql: string; up?: (connection: Db) => void };
 
 const MIGRATIONS: Migration[] = [
   {
@@ -174,9 +179,36 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX packs_user ON packs(user_id, created_at DESC);
     `,
   },
+  {
+    id: 2,
+    name: "capture stages and attempts",
+    sql: `
+      ALTER TABLE captures ADD COLUMN stage TEXT;
+      ALTER TABLE captures ADD COLUMN retry_of TEXT REFERENCES captures(id) ON DELETE SET NULL;
+      ALTER TABLE captures ADD COLUMN artifacts INTEGER NOT NULL DEFAULT 1;
+      UPDATE captures SET stage = 'done' WHERE status = 'ready';
+    `,
+  },
+  {
+    id: 3,
+    name: "items, boards, analyses and findings; references and collections migrated",
+    sql: LIBRARY_SQL,
+    up: migrateLibrary,
+  },
+  {
+    id: 4,
+    name: "image references and nested boards",
+    sql: `
+      ALTER TABLE boards ADD COLUMN parent_id TEXT REFERENCES boards(id) ON DELETE CASCADE;
+      CREATE INDEX boards_parent ON boards(user_id, parent_id, position);
+      CREATE UNIQUE INDEX items_original_content
+        ON items(user_id, signature) WHERE subkind = 'image-original';
+    `,
+  },
 ];
 
-export function migrate(): { applied: number[]; current: number } {
+/** `target` stops at a given migration: the seam the migration tests use to build an old database. */
+export function migrate(target = Infinity): { applied: number[]; current: number } {
   const connection = db();
   connection.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`);
@@ -185,10 +217,11 @@ export function migrate(): { applied: number[]; current: number } {
   );
   const applied: number[] = [];
   for (const migration of MIGRATIONS) {
-    if (done.has(migration.id)) continue;
+    if (done.has(migration.id) || migration.id > target) continue;
     connection.exec("BEGIN");
     try {
       connection.exec(migration.sql);
+      migration.up?.(connection);
       connection
         .prepare("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)")
         .run(migration.id, migration.name, new Date().toISOString());

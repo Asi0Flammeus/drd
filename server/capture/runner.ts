@@ -1,6 +1,5 @@
 /**
- * The capture pipeline: a vetted URL in, a screenshot plus real browser
- * geometry out.
+ * The capture pipeline: a vetted URL in, artifacts on disk out.
  *
  * Why a server-side browser at all — the boundary that shapes this whole app:
  * a cross-origin page in an iframe cannot be read from JavaScript. There is no
@@ -8,52 +7,49 @@
  * someone else's site. Either a browser we control loads the page and reports
  * geometry, or the feature does not exist. So one runs here, in the smallest,
  * most suspicious configuration that still renders a real page.
+ *
+ * Stages, each written to `captures.stage` so the client can show progress:
+ *
+ *   load     navigation behind the guard, network settles, fonts load
+ *   scroll   reveal pass: viewport by viewport, 250 ms dwell, real motion
+ *            (no reduced-motion emulation), so scroll-revealed content and
+ *            lazy media exist before anything is measured
+ *   measure  DOM pass (own text nodes only), CDP rendered fonts, stylesheet
+ *            and font responses from the network
+ *   pixels   tile pass at DPR 2: a settled screenshot per viewport, a 24 px
+ *            grid of painted colour, crops cut from those same tiles for
+ *            every component and text style fully in view; fixed layers are
+ *            shot once then hidden; tiles stitched into page.jpg; hover and
+ *            specimen passes
+ *
+ * The capture never re-shoots a region out of view: that is how version 1
+ * produced blank crops (W2, W3).
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
-import type { Browser, HTTPRequest, Page } from "puppeteer";
+import type { Browser, HTTPRequest, HTTPResponse, Page } from "puppeteer";
+import sharp from "sharp";
 import { config } from "../config.ts";
 import { db } from "../db.ts";
+import { sharedMemoryIgnoredDefaults } from "./shared-memory.ts";
 import { guardUrl, inspectUrl, isPrivateAddress, parseUserUrl } from "./url-guard.ts";
+import { fontSource, isOflSource } from "./artifacts.ts";
+import type { CaptureArtifacts, DomPass, HoverStyle } from "./artifacts.ts";
 
-const EXTRACTOR = readFileSync(fileURLToPath(new URL("./extract.browser.js", import.meta.url)), "utf8");
+// libvips' operation cache keeps decoded tiles alive between captures; every
+// image here is decoded once and never again, so the cache is only memory.
+sharp.cache(false);
 
-export type ExtractedElement = {
-  selector: string;
-  tag: string;
-  label: string;
-  guess: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  area: number;
-  depth: number;
-  text: string;
-  styles: Record<string, string>;
-};
+const EXTRACTOR = readFileSync(fileURLToPath(new URL("./extract.browser.js", import.meta.url)), "utf8").trim();
 
-export type ExtractedLink = {
-  href: string;
-  host: string;
-  anchor: string;
-  rel: string;
-  inFooter: boolean;
-  creditLike: boolean;
-};
+/** Device pixel ratio of every tile, crop and specimen. */
+const DPR = 2;
 
-export type Extraction = {
-  meta: Record<string, string>;
-  page: { width: number; height: number; viewportWidth: number; viewportHeight: number };
-  elements: ExtractedElement[];
-  links: ExtractedLink[];
-  fonts: { family: string; count: number; sizes: number[]; weights: string[]; sample: string }[];
-  colors: { hex: string; count: number; role: string }[];
-};
+export type CaptureStage = "load" | "scroll" | "measure" | "pixels" | "analyse" | "done";
 
 /* ------------------------------------------------------------- queue ----- */
 
@@ -61,6 +57,12 @@ type Job = { captureId: string; url: string };
 
 const pending: Job[] = [];
 let running = 0;
+
+/** Called after a capture is ready; the analysis job registers itself here (keeps capture free of analysis imports). */
+let afterCapture: (captureId: string) => Promise<void> = async () => {};
+export function onCaptureReady(hook: (captureId: string) => Promise<void>): void {
+  afterCapture = hook;
+}
 
 export function enqueueCapture(captureId: string, url: string): void {
   pending.push({ captureId, url });
@@ -82,7 +84,7 @@ function drain(): void {
 }
 
 /** Waits for a capture to leave the `pending`/`running` state. Used by tests and the CLI. */
-export async function waitForCapture(captureId: string, timeoutMs = config.capture.timeoutMs + 20_000): Promise<string> {
+export async function waitForCapture(captureId: string, timeoutMs = config.capture.timeoutMs + 60_000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const row = db().prepare("SELECT status FROM captures WHERE id = ?").get(captureId) as { status: string } | undefined;
@@ -93,7 +95,7 @@ export async function waitForCapture(captureId: string, timeoutMs = config.captu
   }
 }
 
-/** Three call sites need the same pause; the executor form is the one thing Node still lacks a primitive for. */
+/** Several call sites need the same pause; the executor form is the one thing Node still lacks a primitive for. */
 function sleep(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -104,6 +106,10 @@ function markFailed(captureId: string, message: string): void {
   db()
     .prepare("UPDATE captures SET status = 'failed', error = ?, finished_at = ? WHERE id = ?")
     .run(message.slice(0, 400), new Date().toISOString(), captureId);
+}
+
+function setStage(captureId: string, stage: CaptureStage): void {
+  db().prepare("UPDATE captures SET stage = ? WHERE id = ?").run(stage, captureId);
 }
 
 /* ------------------------------------------------------------ chrome ----- */
@@ -117,7 +123,6 @@ async function launch(hostname: string, address: string): Promise<Browser> {
     "--no-first-run",
     "--no-default-browser-check",
     "--mute-audio",
-    "--disable-dev-shm-usage",
     // The address was vetted a moment ago; pin it so the name cannot resolve
     // somewhere else between the check and the connection (DNS rebinding).
     `--host-resolver-rules=MAP ${hostname} ${address},EXCLUDE localhost`,
@@ -126,6 +131,7 @@ async function launch(hostname: string, address: string): Promise<Browser> {
   return puppeteer.launch({
     headless: true,
     args,
+    ignoreDefaultArgs: sharedMemoryIgnoredDefaults(),
     executablePath: config.capture.chromePath || undefined,
     protocolTimeout: config.capture.timeoutMs,
   });
@@ -169,7 +175,132 @@ function attachGuards(page: Page, state: { bytes: number; requests: number; bloc
   });
 }
 
+/** Interval of the forced collections, see `paceCollections`. */
+const COLLECT_EVERY_MS = 200;
+
+/**
+ * Chrome does not know the container's memory limit, and a page that makes
+ * garbage fast lets its renderer grow until the next collection it decides
+ * on. nematis.com draws a canvas animation that leaves ~300 MB/s outside the
+ * V8 heap: measured, its renderer reached 1.9 GB between two collections and
+ * was OOM-killed in the 2 GB container (M1); a forced collection every
+ * 300 ms held it under 0.95 GB on the host. A collection of a page heap
+ * costs a few milliseconds.
+ */
+async function paceCollections(page: Page): Promise<() => Promise<void>> {
+  const session = await page.createCDPSession();
+  let busy = false;
+  const timer = setInterval(() => {
+    if (busy) return;
+    busy = true;
+    session
+      .send("HeapProfiler.collectGarbage")
+      .catch(() => {})
+      .finally(() => {
+        busy = false;
+      });
+  }, COLLECT_EVERY_MS);
+  return async () => {
+    clearInterval(timer);
+    await session.detach().catch(() => {});
+  };
+}
+
+/* ----------------------------------------------------------- network ----- */
+
+type Recorded = {
+  stylesheets: { url: string; text: string }[];
+  fonts: { url: string; host: string; bytes: number; body: Buffer | null; mime: string }[];
+  reads: Promise<unknown>[];
+};
+
+const MAX_STYLESHEET_TEXT = 3_000_000;
+const MAX_FONT_FILE = 1_500_000;
+const MAX_FONT_FILES = 16;
+
+/** Font and stylesheet responses: font sources (§4.3) and the site's own token names (§4.1 step 5). */
+function recordNetwork(page: Page, pageHost: string): Recorded {
+  const recorded: Recorded = { stylesheets: [], fonts: [], reads: [] };
+  let cssBytes = 0;
+  let keptFonts = 0;
+  page.on("response", (response: HTTPResponse) => {
+    const type = response.request().resourceType();
+    if (response.status() >= 300) return;
+    let url: URL;
+    try {
+      url = new URL(response.url());
+    } catch {
+      return;
+    }
+    if (type === "stylesheet") {
+      recorded.reads.push(
+        response.text().then((text) => {
+          if (cssBytes + text.length > MAX_STYLESHEET_TEXT) return;
+          cssBytes += text.length;
+          recorded.stylesheets.push({ url: url.toString(), text });
+        }, () => {}),
+      );
+    } else if (type === "font") {
+      const entry = { url: url.toString(), host: url.hostname, bytes: Number(response.headers()["content-length"] ?? 0) || 0, body: null as Buffer | null, mime: response.headers()["content-type"] ?? "" };
+      recorded.fonts.push(entry);
+      // Keep the file only for the OFL catalogues (open question 3, default:
+      // files for Google Fonts and Fontshare, pictures only for the rest).
+      if (isOflSource(fontSource(url.hostname, pageHost)) && keptFonts < MAX_FONT_FILES) {
+        keptFonts += 1;
+        recorded.reads.push(
+          response.buffer().then((body) => {
+            entry.bytes = body.length;
+            if (body.length <= MAX_FONT_FILE) entry.body = body;
+          }, () => {}),
+        );
+      }
+    }
+  });
+  return recorded;
+}
+
+type FontFace = { family: string; weight: string; style: string; urls: string[] };
+
+/** `@font-face` blocks of the stylesheets the page loaded, with their `src` URLs resolved. */
+export function parseFontFaces(sheets: { url: string; text: string }[]): FontFace[] {
+  const faces: FontFace[] = [];
+  for (const sheet of sheets) {
+    for (const block of sheet.text.matchAll(/@font-face\s*\{([^}]*)\}/gi)) {
+      const body = block[1];
+      const family = /font-family\s*:\s*([^;]+)/i.exec(body)?.[1]?.trim().replace(/^["']|["']$/g, "");
+      if (!family) continue;
+      const urls: string[] = [];
+      for (const src of body.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) {
+        try {
+          urls.push(new URL(src[1], sheet.url).toString());
+        } catch {
+          /* unparseable src: skip */
+        }
+      }
+      faces.push({
+        family,
+        weight: /font-weight\s*:\s*([^;]+)/i.exec(body)?.[1]?.trim() ?? "400",
+        style: /font-style\s*:\s*([^;]+)/i.exec(body)?.[1]?.trim() ?? "normal",
+        urls,
+      });
+    }
+  }
+  return faces;
+}
+
+/** Custom property names declared on `:root` or `html` in stylesheet text. */
+export function rootPropertyNames(text: string): string[] {
+  const names = new Set<string>();
+  for (const block of text.matchAll(/(^|[}\s,])(:root|html)\b[^{]*\{([^}]*)\}/g)) {
+    for (const decl of block[3].matchAll(/(--[\w-]+)\s*:/g)) names.add(decl[1]);
+  }
+  return [...names];
+}
+
 /* ----------------------------------------------------------- capture ----- */
+
+type Extract = <T>(page: Page, mode: string, arg?: unknown) => Promise<T>;
+const extract: Extract = (page, mode, arg) => page.evaluate(`(${EXTRACTOR})(${JSON.stringify(mode)}, ${JSON.stringify(arg ?? null)})`) as never;
 
 export async function runCapture(captureId: string, requestedUrl: string): Promise<void> {
   const guard = await guardUrl(requestedUrl);
@@ -178,13 +309,23 @@ export async function runCapture(captureId: string, requestedUrl: string): Promi
     return;
   }
 
-  db().prepare("UPDATE captures SET status = 'running' WHERE id = ?").run(captureId);
+  db().prepare("UPDATE captures SET status = 'running', stage = 'load' WHERE id = ?").run(captureId);
 
   const dir = join(config.mediaDir, captureId);
   mkdirSync(dir, { recursive: true });
 
   const state = { bytes: 0, requests: 0, blocked: 0 };
+  // Milliseconds per step, kept in the capture's meta: the deadline is shared
+  // by every step, so a slow page must say which one ate it.
+  const timings: Record<string, number> = {};
+  let lap = Date.now();
+  const mark = (step: string) => {
+    const now = Date.now();
+    timings[step] = now - lap;
+    lap = now;
+  };
   let browser: Browser | null = null;
+  let stopCollections: (() => Promise<void>) | null = null;
   const overallTimeout = captureDeadline(config.capture.timeoutMs);
 
   try {
@@ -192,22 +333,26 @@ export async function runCapture(captureId: string, requestedUrl: string): Promi
     const page = await browser.newPage();
     await page.setRequestInterception(true);
     attachGuards(page, state);
+    const network = recordNetwork(page, guard.url.hostname);
     await page.setUserAgent(config.capture.userAgent);
-    await page.setViewport({
-      width: config.capture.viewportWidth,
-      height: config.capture.viewportHeight,
-      deviceScaleFactor: 1,
-    });
+    // Loaded, revealed and measured at DPR 1; only the pixel pass needs DPR 2.
+    // A page sizes its canvases and decodes its images for the device: at
+    // DPR 2 nematis' renderer held 632 MB of canvas alone at the end of the
+    // reveal pass, the peak of the whole capture (M1, measured 30/09).
+    const viewport = { width: config.capture.viewportWidth, height: config.capture.viewportHeight };
+    await page.setViewport({ ...viewport, deviceScaleFactor: 1 });
     await page.setJavaScriptEnabled(true);
     page.setDefaultTimeout(config.capture.navigationTimeoutMs);
-    // A captured page must never be able to hold the pipeline open with a
-    // dialog, and animations must stop so the screenshot is reproducible.
+    // A captured page must never be able to hold the pipeline open with a dialog.
     page.on("dialog", (dialog) => void dialog.dismiss().catch(() => {}));
-    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+    stopCollections = await paceCollections(page);
 
     const work = (async () => {
       const response = await page.goto(guard.url.toString(), {
-        waitUntil: "networkidle2",
+        // `networkidle2` never fires on a page that keeps a socket or a video
+        // stream open (nematis.com timed out at 25 s that way). Wait for the
+        // document, then give the network a bounded chance to settle.
+        waitUntil: "domcontentloaded",
         timeout: config.capture.navigationTimeoutMs,
       });
       if (!response) throw new Error("Aucune réponse du site.");
@@ -221,38 +366,84 @@ export async function runCapture(captureId: string, requestedUrl: string): Promi
       }
       const status = response.status();
       if (status >= 400) throw new Error(`Le site a répondu ${status}.`);
+      await page.waitForNetworkIdle({ idleTime: 600, timeout: config.capture.settleTimeoutMs }).catch(() => {});
+      await Promise.race([page.evaluate("document.fonts.ready.then(() => true)"), sleep(4000)]).catch(() => {});
+      mark("load");
 
-      await autoScroll(page);
-      await page.evaluate("window.scrollTo(0, 0)");
-      await sleep(400);
+      setStage(captureId, "scroll");
+      await revealPass(page);
+      mark("scroll");
 
-      const extraction = (await page.evaluate(`${EXTRACTOR}\n()`)) as Extraction;
-      const height = Math.min(extraction.page.height, config.capture.maxPageHeight);
+      setStage(captureId, "measure");
+      await extract(page, "scrollTo", 0);
+      await sleep(350);
+      const dom = await extract<DomPass>(page, "dom");
+      mark("dom");
+      const rendered = await renderedFonts(page, dom.textStyles.map((style) => style.id));
+      mark("fonts");
+      await Promise.race([Promise.allSettled(network.reads), sleep(5000)]);
+      const names = new Set(dom.customProperties);
+      for (const sheet of network.stylesheets) for (const name of rootPropertyNames(sheet.text)) names.add(name);
+      const customProperties = names.size
+        ? await extract<CaptureArtifacts["customProperties"]>(page, "resolveVars", [...names])
+        : [];
+      mark("network");
+      const darkScheme = dom.darkScheme || network.stylesheets.some((sheet) => /prefers-color-scheme\s*:\s*dark/i.test(sheet.text));
 
-      const shot = await page.screenshot({
-        type: "jpeg",
-        quality: 82,
-        clip: { x: 0, y: 0, width: extraction.page.width, height, scale: 1 },
-        captureBeyondViewport: true,
-      });
-      writeFileSync(join(dir, "page.jpg"), shot);
+      setStage(captureId, "pixels");
+      await page.setViewport({ ...viewport, deviceScaleFactor: DPR });
+      // The 2× images the page now asks for, before the first tile.
+      await page.waitForNetworkIdle({ idleTime: 500, timeout: 4000 }).catch(() => {});
+      await sleep(300);
+      const tiles = await tilePass(page, dir, dom);
+      mark("tiles");
+      const pageHeight = Math.min(tiles.height, config.capture.maxPageHeight);
+      await stitch(dir, tiles.shots, dom.page.width, pageHeight);
+      await fallbackCrops(dir, dom, tiles, pageHeight);
+      mark("stitch");
+      // The 1× tiles were only ever the material for page.jpg.
+      for (const shot of tiles.shots) rmSync(join(dir, shot.file), { force: true });
+      await extract(page, "showFixed");
+      const hover = await hoverPass(page, dir, dom);
+      mark("hover");
+      const specimens = await specimenPass(page, dir, dom, rendered);
+      mark("specimens");
+      const fonts = saveFontFiles(dir, network, guard.url.hostname);
 
-      const elements = pickElements(extraction.elements, height);
-      const crops = await cropElements(page, dir, elements, height);
-      return { extraction, elements, crops, height };
+      const { meta, page: pageSize, links, customProperties: _names, darkScheme: _dark, ...rest } = dom;
+      const artifacts: CaptureArtifacts = {
+        version: 2,
+        url: response.url(),
+        capturedAt: new Date().toISOString(),
+        partial: false,
+        page: { ...pageSize, height: pageHeight },
+        meta,
+        dom: rest,
+        darkScheme,
+        customProperties,
+        samples: tiles.samples,
+        fonts: { rendered, network: fonts },
+        hover,
+        media: { page: "page.jpg", crops: tiles.crops, typeCrops: tiles.typeCrops, specimens },
+      };
+      writeFileSync(join(dir, "artifacts.json"), JSON.stringify(artifacts));
+      return { artifacts, links, finalUrl: new URL(response.url()) };
     })();
 
     const result = await Promise.race([work, overallTimeout.promise]);
     if (result === "timeout") throw new Error(`Capture interrompue après ${Math.round(config.capture.timeoutMs / 1000)} s.`);
-    const { extraction, elements, crops, height } = result as Awaited<typeof work>;
-
-    persist(captureId, guard.url, extraction, elements, crops, height, state);
+    const { artifacts, links, finalUrl } = result as Awaited<typeof work>;
+    persist(captureId, finalUrl, artifacts, links, { ...state, timings });
+    console.log(`[drd] capture ${captureId} ${finalUrl.hostname} ${Object.entries(timings).map(([step, ms]) => `${step} ${(ms / 1000).toFixed(1)}s`).join(" · ")}`);
   } catch (error) {
     markFailed(captureId, error instanceof Error ? error.message : String(error));
+    return;
   } finally {
     overallTimeout.cancel();
+    await stopCollections?.();
     await browser?.close().catch(() => {});
   }
+  await afterCapture(captureId).catch((error) => console.error("[drd] analysis after capture", error));
 }
 
 /** A deadline the whole capture races against, cancellable so a fast page does not hold the process open. */
@@ -262,138 +453,408 @@ function captureDeadline(ms: number): { promise: Promise<"timeout">; cancel: () 
   return { promise, cancel: () => clearTimeout(handle) };
 }
 
-/** Lazy images only load if something scrolls. Bounded, so an infinite feed cannot win. */
-async function autoScroll(page: Page): Promise<void> {
-  await page.evaluate(`new Promise((resolve) => {
-    let y = 0;
-    const step = Math.max(400, window.innerHeight * 0.9);
-    const limit = Math.min(document.documentElement.scrollHeight, ${config.capture.maxPageHeight});
-    const timer = setInterval(() => {
-      window.scrollTo(0, y);
-      y += step;
-      if (y > limit) { clearInterval(timer); resolve(null); }
-    }, 90);
-  })`);
+/**
+ * Scroll viewport by viewport with a 250 ms dwell and real motion, so
+ * IntersectionObserver reveals fire and lazy media loads. Bounded by the page
+ * height cap, so an infinite feed cannot win.
+ */
+async function revealPass(page: Page): Promise<void> {
+  let y = 0;
+  for (let stop = 0; stop < 40; stop += 1) {
+    const at = await extract<{ y: number; height: number; viewport: number }>(page, "scrollTo", y);
+    await sleep(250);
+    const limit = Math.min(at.height, config.capture.maxPageHeight);
+    if (at.y + at.viewport >= limit - 2) break;
+    y = at.y + at.viewport;
+  }
+  // Give the last lazy images their chance before anything is measured.
+  await page.waitForNetworkIdle({ idleTime: 400, timeout: 3000 }).catch(() => {});
+}
+
+/** CDP `CSS.getPlatformFontsForNode`: which family really painted each text style (W6). */
+async function renderedFonts(page: Page, styleIds: number[]): Promise<CaptureArtifacts["fonts"]["rendered"]> {
+  const out: CaptureArtifacts["fonts"]["rendered"] = [];
+  if (!styleIds.length) return out;
+  const session = await page.createCDPSession();
+  try {
+    await session.send("DOM.enable");
+    await session.send("CSS.enable");
+    const { root } = await session.send("DOM.getDocument", { depth: 0 });
+    for (const id of styleIds) {
+      try {
+        const { nodeId } = await session.send("DOM.querySelector", { nodeId: root.nodeId, selector: `[data-drd-t="${id}"]` });
+        if (!nodeId) continue;
+        const { fonts } = await session.send("CSS.getPlatformFontsForNode", { nodeId });
+        out.push({
+          style: id,
+          families: fonts
+            .map((font) => ({ family: font.familyName, glyphs: font.glyphCount, custom: Boolean(font.isCustomFont) }))
+            .sort((a, b) => b.glyphs - a.glyphs),
+        });
+      } catch {
+        // A node that relaid out of the tree between passes: that style simply has no CDP answer.
+      }
+    }
+  } finally {
+    await session.detach().catch(() => {});
+  }
+  return out;
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+type Viewport = { width: number; height: number };
+type Shot = { y: number; file: string };
+type TileResult = {
+  shots: Shot[];
+  height: number;
+  samples: CaptureArtifacts["samples"];
+  crops: CaptureArtifacts["media"]["crops"];
+  typeCrops: CaptureArtifacts["media"]["typeCrops"];
+};
+
+const CONTEXT = 16;
+
+/** A CSS-pixel box plus context, clamped to the viewport; null when too thin to be a crop. */
+function inViewport(box: Box, context: number, viewport: Viewport): Box | null {
+  const left = Math.max(0, box.x - context);
+  const top = Math.max(0, box.y - context);
+  const right = Math.min(viewport.width, box.x + box.width + context);
+  const bottom = Math.min(viewport.height, box.y + box.height + context);
+  if (right - left < 4 || bottom - top < 4) return null;
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 /**
- * Which extracted boxes become selectable regions. Biggest first is wrong —
- * that buries the buttons under the page wrapper — so the list is balanced:
- * every distinctive small component, then the large blocks that remain.
+ * A crop as WebP, or null when every channel is flat: a blank band is not a
+ * component (W3). The region is materialised first: `stats()` on an extract
+ * of a whole raw frame reads the whole frame, ~0.5 s a crop (measured, P1).
  */
-function pickElements(elements: ExtractedElement[], pageHeight: number): ExtractedElement[] {
-  const inside = elements.filter((el) => el.y < pageHeight && el.width >= 24 && el.height >= 16);
-  const priority: Record<string, number> = { button: 0, image: 1, card: 2, nav: 3, hero: 3, type: 4, grid: 5, form: 5, footer: 6, section: 7 };
-  return inside
-    .slice()
-    .sort((a, b) => (priority[a.guess] ?? 9) - (priority[b.guess] ?? 9) || b.area - a.area)
-    .slice(0, config.capture.maxElements);
+async function encodeCrop(image: sharp.Sharp): Promise<Buffer | null> {
+  const { data, info } = await image.removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const region = sharp(data, { raw: { width: info.width, height: info.height, channels: 3 } });
+  const stats = await region.clone().stats();
+  if (stats.channels.slice(0, 3).every((channel) => channel.stdev < 1.5)) return null;
+  return (info.height > 1600 ? region.resize({ height: 1600 }) : region).webp({ quality: 86 }).toBuffer();
 }
 
-async function cropElements(
-  page: Page,
-  dir: string,
-  elements: ExtractedElement[],
-  pageHeight: number,
-): Promise<Record<string, string>> {
-  const crops: Record<string, string> = {};
-  let made = 0;
-  for (const element of elements) {
-    if (made >= config.capture.maxCrops) break;
-    const height = Math.min(element.height, 1400, pageHeight - element.y);
-    if (element.width < 40 || height < 24) continue;
-    const file = `el-${made}.png`;
+/**
+ * One element alone: a screenshot clipped to its viewport box plus context,
+ * at DPR 2. Chrome encodes a few thousand pixels instead of the 4.6 M of the
+ * whole viewport, and nothing else is decoded (P1: the hover and specimen
+ * passes took 27 s and 10 s on nematis with full-viewport PNGs).
+ */
+async function shootBox(page: Page, box: Box, context: number, viewport: Viewport): Promise<Buffer | null> {
+  const region = inViewport(box, context, viewport);
+  if (!region) return null;
+  // `clip` is in page coordinates; the boxes are viewport coordinates.
+  const [scrollX, scrollY] = (await page.evaluate("[window.scrollX, window.scrollY]")) as [number, number];
+  // A page that scrolls itself (smooth-scroll libraries) can move between the
+  // read and the shot; the clip then misses and the crop is simply absent.
+  const png = await page
+    .screenshot({ type: "png", optimizeForSpeed: true, captureBeyondViewport: false, clip: { x: region.x + scrollX, y: region.y + scrollY, width: region.width, height: region.height } })
+    .catch(() => null);
+  return png ? encodeCrop(sharp(png)) : null;
+}
+
+/**
+ * The pixel pass. Content is already revealed, so each stop is shot once,
+ * settled, at DPR 2; the grid sample and every crop come from that same
+ * frame, decoded once. Fixed and sticky layers appear in the first tile only,
+ * except fixed media (a canvas or a video behind every screen), which stay.
+ * Each tile leaves only its 1× copy on disk, the material of page.jpg.
+ */
+async function tilePass(page: Page, dir: string, dom: DomPass): Promise<TileResult> {
+  const viewport = { width: dom.page.viewportWidth, height: dom.page.viewportHeight };
+  const result: TileResult = { shots: [], height: dom.page.height, samples: { bg: {}, img: 0, total: 0 }, crops: {}, typeCrops: {} };
+  let y = 0;
+  let sampledTo = 0;
+  // Run backgrounds measured from the hit-test stack, once each, on the first screen that shows them.
+  const measured = new Set<number>();
+  // Components and text styles whose crop is done or under way, as `c12` / `t3`.
+  const claimed = new Set<string>();
+  let inFlight: Promise<void> = Promise.resolve();
+  for (let stop = 0; stop < 40; stop += 1) {
+    const at = await extract<{ y: number; height: number; viewport: number }>(page, "scrollTo", y);
+    await sleep(stop === 0 ? 300 : 160);
+    let inview = await extract<{ kind: "c" | "t"; id: number; box: Box; settled: boolean }[]>(page, "inview");
+    if (inview.some((item) => !item.settled)) {
+      await sleep(500);
+      inview = await extract(page, "inview");
+    }
+    const png = await page.screenshot({ type: "png", optimizeForSpeed: true });
+    const file = `tile-${stop}.png`;
+    result.shots.push({ y: at.y, file });
+    const due = inview.filter((item) => item.settled && !claimed.has(`${item.kind}${item.id}`));
+    for (const item of due) claimed.add(`${item.kind}${item.id}`);
+    // Decoding, the 1× copy and the crops of this frame run while the page
+    // moves on to the next stop; one frame in flight bounds the memory (P1).
+    await inFlight;
+    inFlight = (async () => {
+      const { data: pixels, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      const frame = () => sharp(pixels, { raw: { width: info.width, height: info.height, channels: 3 } });
+      await frame().resize({ width: dom.page.width }).png({ compressionLevel: 1 }).toFile(join(dir, file));
+      for (const item of due) {
+        const target = item.kind === "c" ? result.crops : result.typeCrops;
+        const region = inViewport(item.box, item.kind === "c" ? CONTEXT : 6, viewport);
+        if (!region) continue;
+        const left = Math.floor(region.x * DPR);
+        const top = Math.floor(region.y * DPR);
+        const width = Math.min(info.width, Math.ceil((region.x + region.width) * DPR)) - left;
+        const height = Math.min(info.height, Math.ceil((region.y + region.height) * DPR)) - top;
+        const data = await encodeCrop(frame().extract({ left, top, width, height })).catch(() => null);
+        if (!data) {
+          // Blank here (still loading, covered): a later screen may show it.
+          claimed.delete(`${item.kind}${item.id}`);
+          continue;
+        }
+        const name = `${item.kind === "c" ? "c" : "t"}-${item.id}.webp`;
+        writeFileSync(join(dir, name), data);
+        target[item.id] = { file: name, scale: DPR };
+      }
+    })();
+    // Handled here so a failure is not an unhandled rejection; the next `await inFlight` still throws it.
+    inFlight.catch(() => {});
+
+    const points = dom.runs
+      .map((run, index) => [index, Math.round(run.box.x + run.box.width / 2), Math.round(run.box.y + run.box.height / 2)] as const)
+      .filter(([index, , cy]) => !measured.has(index) && cy >= at.y && cy < at.y + at.viewport);
+    const sample = await extract<{ bg: Record<string, number>; img: number; total: number; at: Record<string, [string | null, boolean]> }>(page, "sample", { from: sampledTo, step: 24, points });
+    for (const [index, [background, onImage]] of Object.entries(sample.at)) {
+      const run = dom.runs[Number(index)];
+      run.background = background;
+      run.onImage = onImage;
+      measured.add(Number(index));
+    }
+    for (const [rgb, n] of Object.entries(sample.bg)) result.samples.bg[rgb] = (result.samples.bg[rgb] ?? 0) + n;
+    result.samples.img += sample.img;
+    result.samples.total += sample.total;
+    sampledTo = at.y + at.viewport;
+
+    if (stop === 0) await extract(page, "hideFixed");
+    const limit = Math.min(at.height, config.capture.maxPageHeight);
+    result.height = at.height;
+    if (at.y + at.viewport >= limit - 2) break;
+    y = at.y + at.viewport;
+  }
+  await inFlight;
+  return result;
+}
+
+/** The 1× tiles laid at their real scroll offsets. */
+async function stitch(dir: string, shots: Shot[], width: number, height: number): Promise<void> {
+  const layers: sharp.OverlayOptions[] = [];
+  for (const shot of shots) {
+    if (shot.y >= height) continue;
+    const tile = sharp(join(dir, shot.file));
+    const tileHeight = (await tile.metadata()).height ?? 0;
+    const visible = Math.min(tileHeight, height - shot.y);
+    const input = visible < tileHeight ? await tile.extract({ left: 0, top: 0, width, height: visible }).png({ compressionLevel: 1 }).toBuffer() : join(dir, shot.file);
+    layers.push({ input, top: shot.y, left: 0 });
+  }
+  await sharp({ create: { width, height, channels: 3, background: "#ffffff" }, limitInputPixels: false })
+    .composite(layers)
+    // Plain libjpeg: mozjpeg's trellis search took seconds on a 10 MP page for a smaller file nobody downloads.
+    .jpeg({ quality: 84 })
+    .toFile(join(dir, "page.jpg"));
+}
+
+/**
+ * Anything never fully in one viewport (a tall hero, a footer, a nav hidden
+ * after the first tile) is cut from the stitched page at 1×, decoded once.
+ * Components whose crop is still blank are dropped by the analysis: every
+ * component has a crop.
+ */
+async function fallbackCrops(dir: string, dom: DomPass, tiles: TileResult, pageHeight: number): Promise<void> {
+  const width = dom.page.width;
+  const components = dom.components.filter((component) => !tiles.crops[component.id] && component.box.y < pageHeight);
+  const styles = dom.textStyles.filter((style) => !tiles.typeCrops[style.id] && dom.runs[style.rep] && dom.runs[style.rep].box.y < pageHeight);
+  if (!components.length && !styles.length) return;
+  const { data: pixels, info } = await sharp(join(dir, "page.jpg"), { limitInputPixels: false }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const cut = async (box: Box): Promise<Buffer | null> => {
+    const left = Math.max(0, Math.floor(box.x - CONTEXT));
+    const top = Math.max(0, Math.floor(box.y - CONTEXT));
+    const right = Math.min(width, info.width, Math.ceil(box.x + box.width + CONTEXT));
+    const bottom = Math.min(pageHeight, info.height, Math.ceil(box.y + box.height + CONTEXT));
+    if (right - left < 8 || bottom - top < 8) return null;
+    const region = sharp(pixels, { raw: { width: info.width, height: info.height, channels: 3 }, limitInputPixels: false }).extract({ left, top, width: right - left, height: bottom - top });
+    return encodeCrop(region);
+  };
+  for (const component of components) {
+    const data = await cut(component.box).catch(() => null);
+    if (!data) continue;
+    const name = `c-${component.id}.webp`;
+    writeFileSync(join(dir, name), data);
+    tiles.crops[component.id] = { file: name, scale: 1 };
+  }
+  for (const style of styles) {
+    const run = dom.runs[style.rep];
+    const data = await cut({ ...run.box, x: run.box.x + CONTEXT - 6, y: run.box.y + CONTEXT - 6, width: run.box.width - 2 * (CONTEXT - 6), height: run.box.height - 2 * (CONTEXT - 6) }).catch(() => null);
+    if (!data) continue;
+    const name = `t-${style.id}.webp`;
+    writeFileSync(join(dir, name), data);
+    tiles.typeCrops[style.id] = { file: name, scale: 1 };
+  }
+}
+
+const HOVER_KEYS: (keyof HoverStyle)[] = ["background", "color", "borderColor", "boxShadow", "transform", "textDecoration", "opacity"];
+
+/** Up to six buttons and six link-buttons: hover, re-read, shoot the element alone (§4.1 step 6). */
+async function hoverPass(page: Page, dir: string, dom: DomPass): Promise<CaptureArtifacts["hover"]> {
+  const out: CaptureArtifacts["hover"] = [];
+  const targets = [
+    ...dom.components.filter((c) => c.kind === "button").slice(0, 6),
+    ...dom.components.filter((c) => c.kind === "link-button").slice(0, 6),
+  ];
+  const viewport = { width: dom.page.viewportWidth, height: dom.page.viewportHeight };
+  for (const target of targets) {
     try {
-      const shot = await page.screenshot({
-        type: "png",
-        clip: { x: Math.max(0, element.x), y: Math.max(0, element.y), width: element.width, height, scale: 1 },
-        captureBeyondViewport: true,
-      });
-      writeFileSync(join(dir, file), shot);
-      crops[element.selector] = file;
-      made += 1;
+      const selector = `[data-drd-c="${target.id}"]`;
+      await page.evaluate(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: "center", behavior: "instant" })`);
+      await page.mouse.move(1, 1);
+      await sleep(120);
+      const before = await extract<(HoverStyle & { box: Box }) | null>(page, "hoverStyle", target.id);
+      if (!before) continue;
+      // The pointer straight to the centre just read: no second scroll and
+      // clickable-point query, each of which waits for a frame (P1).
+      await page.mouse.move(before.box.x + before.box.width / 2, Math.min(before.box.y + before.box.height / 2, viewport.height - 1));
+      await sleep(380);
+      const after = await extract<(HoverStyle & { box: Box }) | null>(page, "hoverStyle", target.id);
+      if (!after) continue;
+      const changed = HOVER_KEYS.some((k) => before[k] !== after[k]);
+      let file: string | null = null;
+      if (changed) {
+        const data = await shootBox(page, after.box, CONTEXT, viewport);
+        if (data) {
+          file = `h-${target.id}.webp`;
+          writeFileSync(join(dir, file), data);
+        }
+      }
+      const { box: _b, ...beforeStyle } = before;
+      const { box: _a, ...afterStyle } = after;
+      out.push({ id: target.id, before: beforeStyle, after: afterStyle, file });
     } catch {
-      // One unshootable region (a fixed overlay, a zero-size after relayout)
-      // must not cost the capture.
+      // An element that detached or went off-screen: no hover state for it.
     }
   }
-  return crops;
+  await page.mouse.move(1, 1).catch(() => {});
+  return out;
+}
+
+const SPECIMEN_TEXT = "Aa Bb Gg Qq Rr — àéç & 0123456789";
+
+/** Specimen rows that fit one 900 px viewport (91 px each). */
+const SPECIMENS_PER_SHOT = 8;
+
+/**
+ * For each rendered family × weight, a picture of its glyphs set in the
+ * page's own loaded font (§4.1 step 7). The rows of a batch are shot
+ * together and cut apart from one decoded frame.
+ */
+async function specimenPass(page: Page, dir: string, dom: DomPass, rendered: CaptureArtifacts["fonts"]["rendered"]): Promise<CaptureArtifacts["media"]["specimens"]> {
+  const out: CaptureArtifacts["media"]["specimens"] = [];
+  const wanted: { family: string; stack: string; weight: number; italic: boolean }[] = [];
+  const seen = new Set<string>();
+  for (const style of dom.textStyles) {
+    const run = dom.runs[style.rep];
+    const family = rendered.find((r) => r.style === style.id)?.families[0]?.family;
+    if (!run || !family) continue;
+    const id = `${family}|${run.weight}|${run.italic ? 1 : 0}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    wanted.push({ family, stack: run.family, weight: run.weight, italic: run.italic });
+  }
+  const viewport = { width: dom.page.viewportWidth, height: dom.page.viewportHeight };
+  for (let start = 0; start < wanted.length && out.length < 10; start += SPECIMENS_PER_SHOT) {
+    const batch = wanted.slice(start, start + SPECIMENS_PER_SHOT);
+    try {
+      const boxes = await extract<Box[]>(page, "specimen", { text: SPECIMEN_TEXT, fonts: batch });
+      await sleep(60);
+      const union = inViewport({ x: 0, y: 0, width: Math.max(...boxes.map((b) => b.x + b.width)), height: Math.max(...boxes.map((b) => b.y + b.height)) }, 0, viewport);
+      if (!union) continue;
+      const png = await page.screenshot({ type: "png", optimizeForSpeed: true, captureBeyondViewport: false, clip: { ...union, ...((await page.evaluate("({ x: visualViewport.pageLeft, y: visualViewport.pageTop })")) as { x: number; y: number }) } });
+      const { data: pixels, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      for (const [index, box] of boxes.entries()) {
+        if (out.length >= 10) break;
+        const region = inViewport(box, 0, { width: union.width, height: union.height });
+        if (!region) continue;
+        const left = Math.floor(region.x * DPR);
+        const top = Math.floor(region.y * DPR);
+        const width = Math.min(info.width, Math.ceil((region.x + region.width) * DPR)) - left;
+        const height = Math.min(info.height, Math.ceil((region.y + region.height) * DPR)) - top;
+        if (width < 8 || height < 8) continue;
+        const data = await encodeCrop(sharp(pixels, { raw: { width: info.width, height: info.height, channels: 3 } }).extract({ left, top, width, height }));
+        if (!data) continue;
+        const file = `s-${out.length}.webp`;
+        writeFileSync(join(dir, file), data);
+        out.push({ family: batch[index].family, weight: batch[index].weight, italic: batch[index].italic, file });
+      }
+    } catch {
+      /* a batch that cannot render is simply absent */
+    } finally {
+      await extract(page, "unspecimen").catch(() => {});
+    }
+  }
+  return out;
+}
+
+/** Font responses with their source; OFL files written next to the capture. */
+function saveFontFiles(dir: string, network: Recorded, pageHost: string): CaptureArtifacts["fonts"]["network"] {
+  const faces = parseFontFaces(network.stylesheets);
+  return network.fonts.map((font, index) => {
+    const face = faces.find((f) => f.urls.includes(font.url));
+    let file: string | null = null;
+    if (font.body) {
+      const ext = /woff2/.test(font.mime) || font.url.includes(".woff2") ? "woff2" : /woff/.test(font.mime) || font.url.includes(".woff") ? "woff" : "ttf";
+      file = `font-${index}.${ext}`;
+      writeFileSync(join(dir, file), font.body);
+    }
+    return {
+      url: font.url,
+      host: font.host,
+      source: fontSource(font.host, pageHost),
+      bytes: font.bytes,
+      family: face?.family ?? null,
+      weight: face?.weight ?? null,
+      style: face?.style ?? null,
+      file,
+    };
+  });
 }
 
 function persist(
   captureId: string,
   url: URL,
-  extraction: Extraction,
-  elements: ExtractedElement[],
-  crops: Record<string, string>,
-  height: number,
-  state: { bytes: number; requests: number; blocked: number },
+  artifacts: CaptureArtifacts,
+  links: DomPass["links"],
+  state: { bytes: number; requests: number; blocked: number; timings: Record<string, number> },
 ): void {
   const connection = db();
   connection.exec("BEGIN");
   try {
     connection
       .prepare(
-        `UPDATE captures SET status = 'ready', final_url = ?, host = ?, title = ?, description = ?,
-         width = ?, height = ?, screenshot = ?, meta = ?, error = NULL, finished_at = ? WHERE id = ?`,
+        `UPDATE captures SET status = 'ready', stage = 'analyse', final_url = ?, host = ?, title = ?, description = ?,
+         width = ?, height = ?, screenshot = ?, meta = ?, artifacts = 2, error = NULL, finished_at = ? WHERE id = ?`,
       )
       .run(
         url.toString(),
         url.hostname,
-        extraction.meta.title || url.hostname,
-        extraction.meta.description || "",
-        Math.round(extraction.page.width),
-        Math.round(height),
+        artifacts.meta.title || url.hostname,
+        artifacts.meta.description || "",
+        Math.round(artifacts.page.width),
+        Math.round(artifacts.page.height),
         "page.jpg",
-        JSON.stringify({
-          meta: extraction.meta,
-          fonts: extraction.fonts,
-          colors: extraction.colors,
-          page: extraction.page,
-          budget: state,
-        }),
+        JSON.stringify({ meta: artifacts.meta, page: artifacts.page, budget: state }),
         new Date().toISOString(),
         captureId,
       );
-
-    const insertElement = connection.prepare(
-      `INSERT INTO capture_elements (id, capture_id, ordinal, tag, selector, label, guess, x, y, width, height, text, styles, crop)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    elements.forEach((element, index) => {
-      insertElement.run(
-        randomUUID(),
-        captureId,
-        index,
-        element.tag,
-        element.selector,
-        element.label,
-        element.guess,
-        element.x,
-        element.y,
-        element.width,
-        element.height,
-        element.text,
-        JSON.stringify(element.styles),
-        crops[element.selector] ?? null,
-      );
-    });
 
     const insertLink = connection.prepare(
       `INSERT INTO capture_links (id, capture_id, href, host, anchor, rel, in_footer, credit_like)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    for (const link of extraction.links) {
-      insertLink.run(
-        randomUUID(),
-        captureId,
-        link.href,
-        link.host,
-        link.anchor,
-        link.rel,
-        link.inFooter ? 1 : 0,
-        link.creditLike ? 1 : 0,
-      );
+    for (const link of links) {
+      insertLink.run(randomUUID(), captureId, link.href, link.host, link.anchor, link.rel, link.inFooter ? 1 : 0, link.creditLike ? 1 : 0);
     }
     connection.exec("COMMIT");
   } catch (error) {
@@ -403,16 +864,16 @@ function persist(
 }
 
 /** Creates the row and queues the work. Returns the capture id immediately. */
-export function requestCapture(userId: string, rawUrl: string): { id: string } {
+export function requestCapture(userId: string, rawUrl: string, retryOf: string | null = null): { id: string } {
   const url = parseUserUrl(rawUrl);
   if (!url) throw new Error("URL illisible.");
   const id = randomUUID();
   db()
     .prepare(
-      `INSERT INTO captures (id, user_id, requested_url, host, status, created_at)
-       VALUES (?, ?, ?, ?, 'pending', ?)`,
+      `INSERT INTO captures (id, user_id, requested_url, host, status, stage, retry_of, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'load', ?, ?)`,
     )
-    .run(id, userId, url.toString(), url.hostname, new Date().toISOString());
+    .run(id, userId, url.toString(), url.hostname, retryOf, new Date().toISOString());
   enqueueCapture(id, url.toString());
   return { id };
 }

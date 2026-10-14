@@ -9,7 +9,7 @@
 
 import { EASINGS, nearestDurationToken, VARIANTS } from "../data/components";
 import { applyVars, previewVars } from "../tokens";
-import { chips, fieldset, h, ICONS, slider, textButton, toggle } from "../ui/controls";
+import {chips, fieldset, h, slider, textButton, toggle } from "../ui/controls";
 import { buttonSet } from "../ui/previews";
 import { saveEntry } from "./save";
 import type { Panel, ViewContext } from "./view";
@@ -208,7 +208,7 @@ export function buildComponentPanel(ctx: ViewContext): Panel {
       }),
     ]),
     fieldset("Keep it", "", [
-      textButton("Save this recipe", ICONS.save, () => {
+      textButton("Save this recipe", "bookmark", () => {
         saveEntry(ctx, "components", `${selected.name} · r${spec.radius} · ${spec.duration}ms`, structuredClone(spec));
       }),
     ]),

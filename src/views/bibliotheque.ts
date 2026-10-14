@@ -434,6 +434,7 @@ function imageReferenceControls(item: Item, options: { stale: boolean; onChanged
           const result = await post<{ item: Item }>(`/api/items/${item.id}/derivatives/retry`);
           Object.assign(item, result.item);
           paint();
+          app.go(location.hash);
         });
         details.append(retry);
       }
